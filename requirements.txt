@@ -1,0 +1,16 @@
+# PyTorch
+torch
+torchvision
+
+# 3D Gaussian Splatting
+gsplat==1.5.3
+
+# Web viewer (latest versions)
+viser
+nerfview
+
+# Utilities
+imageio[ffmpeg]
+numpy
+matplotlib
+splines
