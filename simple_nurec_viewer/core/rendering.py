@@ -11,6 +11,9 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 from gsplat.rendering import rasterization
+from rich.console import Console
+
+console = Console()
 
 
 @dataclass

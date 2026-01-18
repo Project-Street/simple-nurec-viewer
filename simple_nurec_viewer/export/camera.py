@@ -10,14 +10,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 import torch
+from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
 
 from simple_nurec_viewer.utils.rigid import build_rotation, matrix_to_quaternion, slerp
-
-try:
-    from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
-except ImportError:
-    FThetaCameraDistortionParameters = None
-    FThetaPolynomialType = None
 
 
 @dataclass

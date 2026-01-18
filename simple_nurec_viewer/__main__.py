@@ -14,6 +14,7 @@ except ImportError:
     sys.exit(1)
 
 from .cli.export import export
+from .cli.server import server
 from .cli.view import view
 
 # Create the SubcommandApp
@@ -22,6 +23,7 @@ app = SubcommandApp()
 # Register subcommands using decorators
 app.command(view)
 app.command(export)
+app.command(server)
 
 
 def main() -> int:

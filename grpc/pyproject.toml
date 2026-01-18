@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-nurec-grpc"
+version = "0.1.0"
+description = "gRPC protocol definitions for Simple NuRec Viewer"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
+keywords = ["grpc", "protobuf", "nurec", "rendering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "grpcio>=1.50.0",
+    "grpcio-tools>=1.50.0",
+    "protobuf>=4.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/simple-nurec-viewer"
+Repository = "https://github.com/your-org/simple-nurec-viewer.git"
+
+[tool.setuptools]
+packages = ["simple_nurec_grpc"]
+
+[tool.setuptools.package-data]
+simple_nurec_grpc = ["proto/*.proto"]

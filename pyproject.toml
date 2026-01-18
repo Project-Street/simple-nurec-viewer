@@ -12,38 +12,39 @@ license = { text = "MIT" }
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 keywords = ["3d", "gaussian-splatting", "nurec", "viewer", "visualization"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Topic :: Scientific/Engineering :: Visualization",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Visualization",
 ]
 
 dependencies = [
-    # PyTorch
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
+  # PyTorch
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
 
-    # 3D Gaussian Splatting
-    "gsplat==1.5.3",
+  # 3D Gaussian Splatting
+  "gsplat==1.5.3",
 
-    # Web viewer
-    "viser>=0.1.0",
-    "nerfview>=0.1.0",
+  # Web viewer
+  "viser>=0.1.0",
+  "nerfview>=0.1.0",
 
-    # Rendering
-    "nvdiffrast>=0.3.0",
+  # Rendering
+  "nvdiffrast>=0.3.0",
 
-    # Utilities
-    "imageio[ffmpeg]>=2.31.0",
-    "numpy>=1.24.0",
-    "matplotlib>=3.7.0",
-    "splines>=0.3.0",
-    "tqdm>=4.65.0",
+  # Utilities
+  "imageio[ffmpeg]>=2.31.0",
+  "numpy>=1.24.0",
+  "matplotlib>=3.7.0",
+  "splines>=0.3.0",
+  "tqdm>=4.65.0",
 
-    # CLI
-    "tyro>=0.8.0",
+  # CLI
+  "tyro>=0.8.0",
+  "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -60,10 +61,10 @@ simple-nurec = "simple_nurec_viewer.__main__:main"
 
 [tool.setuptools]
 packages = [
-    "simple_nurec_viewer",
-    "simple_nurec_viewer.scenes",
-    "simple_nurec_viewer.scenes.gaussians",
-    "simple_nurec_viewer.cli",
+  "simple_nurec_viewer",
+  "simple_nurec_viewer.scenes",
+  "simple_nurec_viewer.scenes.gaussians",
+  "simple_nurec_viewer.cli",
 ]
 
 # ruff
