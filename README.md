@@ -2,14 +2,10 @@
 
 A 3D Gaussian Splatting viewer for NuRec USDZ files with interactive web-based visualization.
 
-## Features
+## TODO
 
-- **Interactive 3D Visualization**: View NuRec USDZ files using 3D Gaussian Splatting rendering
-- **Web-based Interface**: Browser-based viewer with intuitive camera controls
-- **Rigid Body Animation**: Support for time-varying rigid body transforms (vehicles, pedestrians)
-- **Sky Rendering**: High-quality sky cubemap rendering
-- **Camera Trajectories**: Visualize camera paths from trajectory data
-- **Timeline Control**: Interactive timeline slider for animating dynamic scenes
+- [ ] Implement specular feature for gaussian
+- [ ] Implement deformable gaussian
 
 ## Installation
 

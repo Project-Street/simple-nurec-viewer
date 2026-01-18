@@ -5,7 +5,7 @@ This module provides the abstract base class for all Gaussian types,
 defining the common interface for Gaussian parameter management and rendering.
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Tuple, Optional
 import torch
 import torch.nn.functional as F
@@ -60,10 +60,7 @@ class BaseGaussian(ABC):
         self.features_specular = features_specular.to(device)
         self.device = device
 
-    def collect(
-        self,
-        **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collect(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Transform features into render-ready Gaussian parameters.
 
@@ -75,7 +72,7 @@ class BaseGaussian(ABC):
             **kwargs: Optional parameters including:
                 - timestamp: Optional timestamp for rigid transforms (ignored by BaseGaussian)
                 - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-                - sh_degree: Spherical harmonics degree (default: 3)
+                - sh_degree: Spherical harmonics degree (default: 1)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -83,16 +80,14 @@ class BaseGaussian(ABC):
             - quats: Normalized quaternions [N, 4]
             - scales: Scales (exp activated) [N, 3]
             - opacities: Opacities (sigmoid activated) [N]
-            - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 20, 3]
+            - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 5, 3]
         """
-        viewmat = kwargs.get('viewmat', None)
-        sh_degree = kwargs.get('sh_degree', 3)
+        viewmat = kwargs.get("viewmat", None)
+        sh_degree = kwargs.get("sh_degree", 1)
         return self._collect_impl(viewmat, sh_degree)
 
     def _collect_impl(
-        self,
-        viewmat: Optional[torch.Tensor] = None,
-        sh_degree: int = 3
+        self, viewmat: Optional[torch.Tensor] = None, sh_degree: int = 1
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Default implementation of collect() for static Gaussians.
@@ -100,12 +95,12 @@ class BaseGaussian(ABC):
         This method performs the common transformation steps:
         1. Normalize quaternions
         2. Convert densities to opacities via sigmoid
-        3. Combine albedo and specular features into SH coefficients
+        3. Use albedo features as SH coefficients (specular features are ignored)
         4. If viewmat is provided, convert SH coefficients to RGB colors
 
         Args:
             viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-            sh_degree: Spherical harmonics degree (default: 3)
+            sh_degree: Spherical harmonics degree (default: 1)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -119,31 +114,21 @@ class BaseGaussian(ABC):
         # Handle different albedo feature dimensions
         # Background: [N, 5, 3], Road: [N, 3]
         if self.features_albedo.dim() == 2:
-            # Road Gaussians: [N, 3] -> [N, 5, 3], only DC component
-            features_albedo = torch.zeros(
-                self.features_albedo.shape[0], 5, 3, device=self.device, dtype=self.features_albedo.dtype
-            )
-            features_albedo[:, 0, :] = self.features_albedo
+            # Road Gaussians: [N, 3] - directly use sigmoid activation
+            colors = torch.sigmoid(self.features_albedo)  # [N, 3]
         else:
-            # Background Gaussians: already [N, 5, 3]
-            features_albedo = self.features_albedo
+            # Background Gaussians: [N, 5, 3] - use spherical harmonics
+            colors = self.features_albedo
 
-        # Combine albedo and specular features for proper SH rendering
-        # features_albedo: [N, 5, 3] - 5 SH bases (degree 0-2)
-        # features_specular: [N, 45] - 15 SH bases (flattened as [N, 15, 3])
-        # Combined: [N, 20, 3] - total 20 SH bases for degree 3
-        features_specular_reshaped = self.features_specular.reshape(-1, 15, 3)
-        colors = torch.cat((features_albedo, features_specular_reshaped), dim=1)  # [N, 20, 3]
+            # Convert SH coefficients to RGB colors if viewmat is provided
+            if viewmat is not None and colors.shape[1] > 1:
+                # Compute view directions: dirs = means - camera_position
+                camtoworld = viewmat.inverse()
+                camera_position = camtoworld[:3, 3]  # [3]
+                dirs = self.positions - camera_position  # [N, 3]
 
-        # Convert SH coefficients to RGB colors if viewmat is provided
-        if viewmat is not None and colors.shape[1] > 1:
-            # Compute view directions: dirs = means - camera_position
-            camtoworld = viewmat.inverse()
-            camera_position = camtoworld[:3, 3]  # [3]
-            dirs = self.positions - camera_position  # [N, 3]
-
-            # Convert SH coefficients to RGB colors
-            colors = spherical_harmonics(sh_degree, dirs, colors)  # [N, 3]
-            colors = torch.clamp_min(colors + 0.5, 0.0)  # Shift and clamp
+                # Convert SH coefficients to RGB colors
+                colors = spherical_harmonics(sh_degree, dirs, colors)  # [N, 3]
+                colors = torch.clamp_min(colors + 0.5, 0.0)  # Shift and clamp
 
         return self.positions, quats, self.scales.exp(), opacities, colors
