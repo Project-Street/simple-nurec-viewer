@@ -23,7 +23,9 @@ from gaussian import GaussianSet
 from sky_cubemap import SkyCubeMap, generate_ray_directions
 
 
-def load_nurec_data(usdz_path: str, device: torch.device) -> Tuple[GaussianSet, Optional[dict], Optional[SkyCubeMap]]:
+def load_nurec_data(
+    usdz_path: str, device: torch.device
+) -> Tuple[GaussianSet, Optional[dict], Optional[SkyCubeMap], Optional[dict]]:
     """
     Load NuRec USDZ file and extract Gaussian parameters.
 
@@ -32,7 +34,7 @@ def load_nurec_data(usdz_path: str, device: torch.device) -> Tuple[GaussianSet, 
         device: Torch device to load tensors to
 
     Returns:
-        Tuple of (GaussianSet, camera_trajectories, sky_cubemap)
+        Tuple of (GaussianSet, camera_trajectories, sky_cubemap, tracks_data)
     """
     # Extract USDZ to temp directory
     with tempfile.TemporaryDirectory(dir="./tmp") as tmpdir:
@@ -40,10 +42,32 @@ def load_nurec_data(usdz_path: str, device: torch.device) -> Tuple[GaussianSet, 
         with zipfile.ZipFile(usdz_path, "r") as zip_ref:
             zip_ref.extractall(tmpdir)
 
+        # Load sequence tracks for rigid bodies from datasource_summary.json
+        datasource_path = Path(tmpdir) / "datasource_summary.json"
+        tracks_data = None
+        if datasource_path.exists():
+            print(f"Loading tracks data from {datasource_path}...")
+            with open(datasource_path, "r") as f:
+                datasource_data = json.load(f)
+            # Extract dynamic tracks data
+            # datasource_data['sequence_tracks_dynamic'] is a dict with one entry
+            seq_tracks_dynamic = datasource_data.get("sequence_tracks_dynamic", {})
+            if seq_tracks_dynamic:
+                # Get the first (and only) entry
+                first_key = list(seq_tracks_dynamic.keys())[0]
+                tracks_data = seq_tracks_dynamic[first_key]
+                print(
+                    f"Loaded tracks data with {len(tracks_data.get('tracks_data', {}).get('tracks_id', []))} tracks"
+                )
+            else:
+                print("No sequence_tracks_dynamic found in datasource_summary.json")
+        else:
+            print("No datasource_summary.json found")
+
         # Load checkpoint using GaussianSet
         ckpt_path = Path(tmpdir) / "checkpoint.ckpt"
         print(f"Loading checkpoint from {ckpt_path}...")
-        gaussian_set = GaussianSet.from_checkpoint(str(ckpt_path), device)
+        gaussian_set = GaussianSet.from_checkpoint(str(ckpt_path), device, tracks_data=tracks_data)
         gaussian_set.print_summary()
 
         # Load camera trajectories from rig_trajectories.json
@@ -72,7 +96,7 @@ def load_nurec_data(usdz_path: str, device: torch.device) -> Tuple[GaussianSet, 
             print("No sky cubemap found in checkpoint")
         del ckpt  # Free memory
 
-        return gaussian_set, trajectories, sky_cubemap
+        return gaussian_set, trajectories, sky_cubemap, tracks_data
 
 
 @torch.no_grad()
@@ -150,16 +174,18 @@ def render_fn(
     gaussian_set: "GaussianSet",
     sky_cubemap: Optional["SkyCubeMap"],
     device: torch.device,
+    timestamp: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Render function for nerfview with merged background and road Gaussians and sky cubemap.
+    Render function for nerfview with merged Gaussians and sky cubemap.
 
     Args:
         camera_state: Current camera state from nerfview
         render_tab_state: Render tab state from nerfview
-        gaussian_set: GaussianSet containing background and road Gaussians
+        gaussian_set: GaussianSet containing background, road, and rigid Gaussians
         sky_cubemap: Optional SkyCubeMap for sky rendering
         device: Torch device
+        timestamp: Optional timestamp for rigid body animation
 
     Returns:
         Rendered RGB image as numpy array [H, W, 3]
@@ -175,15 +201,27 @@ def render_fn(
     bg_means, bg_quats, bg_scales, bg_opacities, bg_colors = gaussian_set.background.collect(viewmat=viewmat)
     road_means, road_quats, road_scales, road_opacities, road_colors = gaussian_set.road.collect(viewmat=viewmat)
 
-    # Merge background and road Gaussians
-    means = torch.cat((bg_means, road_means), dim=0)
-    quats = torch.cat((bg_quats, road_quats), dim=0)
-    scales = torch.cat((bg_scales, road_scales), dim=0)
-    opacities = torch.cat((bg_opacities, road_opacities), dim=0)
-    colors = torch.cat((bg_colors, road_colors), dim=0)
+    # Collect rigid Gaussians if available and timestamp is provided
+    if gaussian_set.rigids is not None and timestamp is not None:
+        rigid_means, rigid_quats, rigid_scales, rigid_opacities, rigid_colors = gaussian_set.rigids.collect(
+            timestamp=timestamp, viewmat=viewmat
+        )
+
+        # Merge all Gaussians
+        means = torch.cat((bg_means, road_means, rigid_means), dim=0)
+        quats = torch.cat((bg_quats, road_quats, rigid_quats), dim=0)
+        scales = torch.cat((bg_scales, road_scales, rigid_scales), dim=0)
+        opacities = torch.cat((bg_opacities, road_opacities, rigid_opacities), dim=0)
+        colors = torch.cat((bg_colors, road_colors, rigid_colors), dim=0)
+    else:
+        # Merge background and road Gaussians only
+        means = torch.cat((bg_means, road_means), dim=0)
+        quats = torch.cat((bg_quats, road_quats), dim=0)
+        scales = torch.cat((bg_scales, road_scales), dim=0)
+        opacities = torch.cat((bg_opacities, road_opacities), dim=0)
+        colors = torch.cat((bg_colors, road_colors), dim=0)
 
     # Render Gaussians with alpha channel for blending
-    # Use RGB mode for standard 3-channel output
     rgb, alpha = render_gaussians(
         means, quats, scales, opacities, colors, viewmat, K, width, height, device, render_mode="RGB", return_alpha=True
     )  # rgb: [H, W, 3], alpha: [H, W]
@@ -195,9 +233,7 @@ def render_fn(
         # Render sky colors
         sky_rgb = sky_cubemap.render(height, width, ray_d)  # [3, H, W]
         # Alpha blend: final = gaussian_rgb * alpha + sky_rgb * (1 - alpha)
-        # Reshape alpha for broadcasting: [H, W] -> [H, W, 1]
         alpha_expanded = alpha.unsqueeze(-1)
-        # Permute sky_rgb to [H, W, 3] for blending
         sky_rgb = sky_rgb.permute(1, 2, 0)  # [3, H, W] -> [H, W, 3]
         final_image = rgb * alpha_expanded + sky_rgb * (1 - alpha_expanded)
     else:
@@ -274,7 +310,7 @@ def main():
     # Load NuRec data
     print(f"\nLoading NuRec data from {args.usdz}")
     print("=" * 60)
-    gaussian_set, trajectories, sky_cubemap = load_nurec_data(args.usdz, device)
+    gaussian_set, trajectories, sky_cubemap, tracks_data = load_nurec_data(args.usdz, device)
     print("=" * 60)
 
     # Setup viewer
@@ -285,14 +321,78 @@ def main():
     if trajectories:
         add_camera_trajectories(server, trajectories)
 
+    # Detect time range from tracks_data
+    if gaussian_set.rigids is not None and tracks_data is not None:
+        import numpy as np
+
+        tracks_dict = tracks_data.get("tracks_data", {})
+        timestamps_us_list = tracks_dict.get("tracks_timestamps_us", [])
+
+        # Find global time range
+        # tracks_timestamps_us is a list of lists, one per track
+        all_min_times = []
+        all_max_times = []
+        for timestamps_us in timestamps_us_list:
+            if len(timestamps_us) > 0:
+                timestamps_s = np.array(timestamps_us) / 1e6
+                all_min_times.append(timestamps_s[0])
+                all_max_times.append(timestamps_s[-1])
+
+        time_offset = min(all_min_times)
+        time_max = max(all_max_times) - time_offset
+        time_min = 0.0
+        print(f"Detected track time range: {time_min:.2f}s to {time_max:.2f}s (offset: {time_offset:.2f}s)")
+    else:
+        time_offset = 0.0
+        time_min = 0.0
+        time_max = 480.0
+
+    # Create render wrapper that includes timestamp
+    # Store slider reference for use in render_wrapper
+    slider_ref = [None]  # Use list to allow assignment in nested function
+
+    def render_wrapper(camera_state, render_tab_state):
+        # Use normalized time + offset for absolute timestamp
+        # Read current value from slider if rigids exist
+        if gaussian_set.rigids is not None and slider_ref[0] is not None:
+            abs_timestamp = slider_ref[0].value + time_offset
+        else:
+            abs_timestamp = None
+
+        return render_fn(camera_state, render_tab_state, gaussian_set, sky_cubemap, device, timestamp=abs_timestamp)
+
     # Create nerfview viewer with layered rendering and sky cubemap
+    # This will add camera control sliders automatically
     viewer = nerfview.Viewer(
         server=server,
-        render_fn=lambda cam, tab: render_fn(cam, tab, gaussian_set, sky_cubemap, device),
+        render_fn=render_wrapper,
         mode="rendering",
     )
 
+    # Add timeline slider AFTER viewer creation to avoid conflicts
+    # This slider will coexist with the camera control sliders
+    if gaussian_set.rigids is not None:
+        slider = server.gui.add_slider(
+            "Timeline (s)",
+            min=time_min,
+            max=time_max,
+            step=0.1,
+            initial_value=time_min,
+        )
+        slider_ref[0] = slider  # Store reference for render_wrapper
+
+        print(f"Added timeline slider: {time_min}s to {time_max}s")
+
+        # Setup slider update callback to trigger re-render
+        @slider.on_update
+        def _(_):
+            # Trigger a re-render when slider value changes
+            if viewer is not None:
+                viewer.rerender(None)
+
     print(f"\nViewer running at http://localhost:{args.port}")
+    if gaussian_set.rigids is not None:
+        print("Use the timeline slider to animate rigid bodies")
     print("Press Ctrl+C to exit\n")
 
     # Keep the viewer running

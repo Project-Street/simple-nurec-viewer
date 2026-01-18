@@ -1,9 +1,10 @@
 # Custom
 /ref
 /.claude
-/CLAUDE.md
 /data
 /tmp
+/.specify
+/specs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
