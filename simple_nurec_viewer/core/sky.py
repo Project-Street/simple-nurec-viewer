@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Sky Cubemap Rendering Module
 
@@ -14,14 +13,16 @@ import torch.nn.functional as F
 
 
 class SkyCubeMap:
-    """Sky cubemap renderer using nvdiffrast.
+    """
+    Sky cubemap renderer using nvdiffrast.
 
     This class renders sky colors from a cubemap texture by sampling
     it with ray directions using nvdiffrast's cube boundary mode.
     """
 
     def __init__(self, cubemap_texture: torch.Tensor, remap_indices: Optional[list[int]] = None):
-        """Initialize the SkyCubeMap with a cubemap texture.
+        """
+        Initialize the SkyCubeMap with a cubemap texture.
 
         Args:
             cubemap_texture: Cubemap texture with shape [6, H, W, 3] or [1, 6, H, W, 3]
@@ -52,7 +53,8 @@ class SkyCubeMap:
 
     @torch.no_grad()
     def render(self, H: int, W: int, ray_d: torch.Tensor) -> torch.Tensor:
-        """Render sky colors for given ray directions.
+        """
+        Render sky colors for given ray directions.
 
         Args:
             H: Image height
@@ -105,7 +107,8 @@ class SkyCubeMap:
 
 
 def generate_ray_directions(H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:
-    """Generate ray directions for all pixels in world space.
+    """
+    Generate ray directions for all pixels in world space.
 
     Args:
         H: Image height
@@ -120,7 +123,9 @@ def generate_ray_directions(H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) 
 
     # Create pixel grid (0 to W-1, 0 to H-1)
     i, j = torch.meshgrid(
-        torch.linspace(0, W - 1, W, device=device), torch.linspace(0, H - 1, H, device=device), indexing="xy"
+        torch.linspace(0, W - 1, W, device=device),
+        torch.linspace(0, H - 1, H, device=device),
+        indexing="xy"
     )  # i: [W,], j: [H,] -> meshgrid -> [H, W] each
 
     # Extract focal lengths and principal point from intrinsic matrix
