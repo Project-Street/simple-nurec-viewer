@@ -10,9 +10,11 @@ from typing import Tuple, Optional
 import numpy as np
 import torch
 
+from simple_nurec_viewer.core.viewer import GaussianSet
+
 
 def render_camera_frame(
-    gaussian_set,
+    gaussian_set: GaussianSet,
     sky_cubemap: Optional[object],
     viewmat: np.ndarray,
     K: np.ndarray,

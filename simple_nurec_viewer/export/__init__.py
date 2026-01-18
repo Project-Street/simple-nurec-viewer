@@ -40,6 +40,7 @@ __all__ = [
     "create_output_directories",
 ]
 
+
 # Main export function (implemented in US1)
 def export_frames(task: ExportTask) -> None:
     """Export camera frames from NuRec USDZ file.
@@ -87,13 +88,13 @@ def export_frames(task: ExportTask) -> None:
 
         ckpt_path = Path(tmpdir) / "checkpoint.ckpt"
         if not ckpt_path.exists():
-            raise ValueError(f"checkpoint.ckpt not found in USDZ file")
+            raise ValueError("checkpoint.ckpt not found in USDZ file")
 
         # Load tracks data for rigid body animation from datasource_summary.json
         tracks_data = None
         datasource_path = Path(tmpdir) / "datasource_summary.json"
         if datasource_path.exists():
-            print(f"Loading tracks data from datasource_summary.json...")
+            print("Loading tracks data from datasource_summary.json...")
             with open(datasource_path, "r") as f:
                 datasource_data = json.load(f)
             # Extract dynamic tracks data
@@ -125,9 +126,7 @@ def export_frames(task: ExportTask) -> None:
     # Determine which cameras to export
     if task.cameras is None:
         # Export all cameras (get unique logical names)
-        camera_names = list(set(
-            calib.logical_sensor_name for calib in camera_calibrations.values()
-        ))
+        camera_names = list(set(calib.logical_sensor_name for calib in camera_calibrations.values()))
         print(f"Exporting all {len(camera_names)} cameras")
     else:
         camera_names = task.cameras
@@ -173,7 +172,7 @@ def export_frames(task: ExportTask) -> None:
 
     # Export frames
     with tqdm(total=total_frames, desc="Exporting frames") as pbar:
-        for camera_name in camera_names:
+        for camera_name in sorted(camera_names, key=lambda x: float("front_wide" not in x)):
             if camera_name not in frame_counts:
                 continue
 
@@ -202,7 +201,7 @@ def export_frames(task: ExportTask) -> None:
                     # If not provided, estimate from resolution
                     params = camera_calibrations[calib_key].camera_model_type
                     # Check if original calib data has focal_length
-                    focal_length = getattr(calib, 'focal_length', calib.resolution[0] * 0.8)  # Default estimate
+                    focal_length = getattr(calib, "focal_length", calib.resolution[0] * 0.8)  # Default estimate
                     K = get_camera_intrinsics(
                         calib.camera_model_type,
                         calib.resolution,

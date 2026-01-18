@@ -5,9 +5,8 @@ This module provides the RigidGaussian class that extends BaseGaussian
 to support time-varying rigid body transforms from trajectory data.
 """
 
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional
 import torch
-import torch.nn.functional as F
 import numpy as np
 
 from .base import BaseGaussian
@@ -194,10 +193,7 @@ class RigidGaussian(BaseGaussian):
 
         return expanded_q, expanded_t
 
-    def collect(
-        self,
-        **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collect(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Transform features into render-ready Gaussian parameters with rigid transform.
 
@@ -205,7 +201,7 @@ class RigidGaussian(BaseGaussian):
             **kwargs: Optional parameters including:
                 - timestamp: Optional timestamp for rigid transform (seconds)
                 - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-                - sh_degree: Spherical harmonics degree (default: 3)
+                - sh_degree: Spherical harmonics degree (default: 1)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -215,9 +211,9 @@ class RigidGaussian(BaseGaussian):
             - opacities: Opacities (sigmoid activated) [N]
             - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 20, 3]
         """
-        timestamp = kwargs.get('timestamp', None)
-        viewmat = kwargs.get('viewmat', None)
-        sh_degree = kwargs.get('sh_degree', 3)
+        timestamp = kwargs.get("timestamp", None)
+        viewmat = kwargs.get("viewmat", None)
+        sh_degree = kwargs.get("sh_degree", 1)
 
         # Get base Gaussian parameters using the default implementation
         means, quats, scales, opacities, colors = self._collect_impl(viewmat, sh_degree)
