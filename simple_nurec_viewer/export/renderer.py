@@ -21,6 +21,8 @@ def render_camera_frame(
     resolution: Tuple[int, int],
     device: torch.device,
     timestamp: Optional[float] = None,
+    camera_model: str = "pinhole",
+    ftheta_coeffs=None,
 ) -> np.ndarray:
     """Render a single camera frame.
 
@@ -32,6 +34,8 @@ def render_camera_frame(
         resolution: (width, height)
         device: Torch device
         timestamp: Optional timestamp for rigid body animation
+        camera_model: Camera model type ("pinhole" or "ftheta")
+        ftheta_coeffs: FThetaCameraDistortionParameters for ftheta cameras
 
     Returns:
         Rendered RGB image [H, W, 3]
@@ -47,7 +51,7 @@ def render_camera_frame(
     # Collect Gaussians
     means, quats, scales, opacities, colors = gaussian_set.hybrid.collect(timestamp=timestamp, viewmat=viewmat_t)
 
-    # Render Gaussians
+    # Render Gaussians with distortion support
     rgb, alpha = render_gaussians(
         means,
         quats,
@@ -61,6 +65,8 @@ def render_camera_frame(
         device,
         render_mode="RGB",
         return_alpha=True,
+        camera_model=camera_model,
+        ftheta_coeffs=ftheta_coeffs,
     )  # rgb: [H, W, 3], alpha: [H, W]
 
     # Blend with sky

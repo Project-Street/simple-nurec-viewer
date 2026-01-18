@@ -26,13 +26,24 @@ class CameraCalibration:
         resolution: Image resolution as (width, height)
         principal_point: Principal point as (cx, cy)
         max_angle: Maximum FOV angle in radians (ftheta only)
+        pixeldist_to_angle_poly: Polynomial coefficients for pixel to angle conversion
+        angle_to_pixeldist_poly: Polynomial coefficients for angle to pixel conversion
+        linear_cde: Linear distortion coefficients (C, D, E)
+        reference_poly: Reference polynomial type for ftheta distortion
+        shutter_type: Shutter type (GLOBAL or ROLLING)
     """
     logical_sensor_name: str
     T_sensor_rig: np.ndarray  # [4, 4]
     camera_model_type: str
     resolution: Tuple[int, int]
     principal_point: Tuple[float, float]
-    max_angle: float
+    # FTheta distortion parameters (with defaults for backward compatibility)
+    max_angle: float = 0.0
+    pixeldist_to_angle_poly: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    angle_to_pixeldist_poly: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    linear_cde: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+    reference_poly: str = "ANGLE_TO_PIXELDIST"
+    shutter_type: str = "GLOBAL"
 
 
 @dataclass
@@ -84,13 +95,19 @@ def load_camera_data(
         camera_calibrations = {}
 
         for camera_key, calib_data in camera_calibrations_raw.items():
+            params = calib_data["camera_model"]["parameters"]
             camera_calibrations[camera_key] = CameraCalibration(
                 logical_sensor_name=calib_data["logical_sensor_name"],
                 T_sensor_rig=np.array(calib_data["T_sensor_rig"]),
                 camera_model_type=calib_data["camera_model"]["type"],
-                resolution=tuple(calib_data["camera_model"]["parameters"]["resolution"]),
-                principal_point=tuple(calib_data["camera_model"]["parameters"]["principal_point"]),
-                max_angle=calib_data["camera_model"]["parameters"].get("max_angle", 0.0),
+                resolution=tuple(params["resolution"]),
+                principal_point=tuple(params["principal_point"]),
+                max_angle=params.get("max_angle", 0.0),
+                pixeldist_to_angle_poly=tuple(params.get("pixeldist_to_angle_poly", [0.0]*6)),
+                angle_to_pixeldist_poly=tuple(params.get("angle_to_pixeldist_poly", [0.0]*6)),
+                linear_cde=tuple(params.get("linear_cde", [1.0, 0.0, 0.0])),
+                reference_poly=params.get("reference_poly", "ANGLE_TO_PIXELDIST"),
+                shutter_type=params.get("shutter_type", "GLOBAL"),
             )
 
         # Extract rig trajectories (use first sequence)

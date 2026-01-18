@@ -13,6 +13,7 @@ from .camera import (
     build_pinhole_K_from_pinhole,
     get_camera_intrinsics,
     validate_transform_chain,
+    build_ftheta_coeffs,
     CameraPose,
 )
 from .renderer import render_camera_frame
@@ -33,6 +34,7 @@ __all__ = [
     "build_pinhole_K_from_pinhole",
     "get_camera_intrinsics",
     "validate_transform_chain",
+    "build_ftheta_coeffs",
     # Rendering
     "render_camera_frame",
     # Output
@@ -266,6 +268,12 @@ def export_frames(task: ExportTask) -> None:
                     # Render frame
                     # Convert timestamp from microseconds to seconds for rigid body animation
                     timestamp_s = timestamp_us / 1e6
+
+                    # Build distortion coefficients for ftheta cameras
+                    ftheta_coeffs = None
+                    if calib.camera_model_type == "ftheta":
+                        ftheta_coeffs = build_ftheta_coeffs(calib)
+
                     image = render_camera_frame(
                         gaussian_set,
                         sky_cubemap,
@@ -274,6 +282,8 @@ def export_frames(task: ExportTask) -> None:
                         scaled_resolution,
                         task.device,
                         timestamp=timestamp_s,
+                        camera_model=calib.camera_model_type,
+                        ftheta_coeffs=ftheta_coeffs,
                     )
 
                     # Save frame

@@ -140,6 +140,8 @@ def render_gaussians(
     device: torch.device,
     render_mode: str = "RGB+ED",
     return_alpha: bool = False,
+    camera_model: str = "pinhole",
+    ftheta_coeffs=None,
 ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
     """
     Render a single group of Gaussians using gsplat.
@@ -157,11 +159,16 @@ def render_gaussians(
         device: Torch device
         render_mode: "RGB" or "RGB+ED" (RGB + alpha/depth)
         return_alpha: If True, return (rgb, alpha), otherwise return rgb only
+        camera_model: Camera model type ("pinhole" or "ftheta")
+        ftheta_coeffs: FThetaCameraDistortionParameters for ftheta cameras
 
     Returns:
         Rendered image [H, W, 3] or tuple of (rgb [H, W, 3], alpha [H, W])
     """
     backgrounds = torch.zeros(1, 3, device=device)
+
+    # Determine if we need UT mode based on distortion
+    use_ut = ftheta_coeffs is not None or camera_model != "pinhole"
 
     render_colors, render_alphas, meta = rasterization(
         means,  # [N, 3]
@@ -177,10 +184,11 @@ def render_gaussians(
         render_mode=render_mode,
         backgrounds=backgrounds,
         radius_clip=3,  # Cull distant Gaussians for performance
-        camera_model="pinhole",
-        with_ut=True,  # Enable Undistorted Transform (UT)
+        camera_model=camera_model,
+        with_ut=use_ut,  # Enable UT based on distortion
         with_eval3d=True,  # Enable Eval3D
         packed=False,  # UT mode requires packed=False
+        ftheta_coeffs=ftheta_coeffs,  # Pass distortion coefficients
     )
 
     rgb = render_colors[0]  # [H, W, C]

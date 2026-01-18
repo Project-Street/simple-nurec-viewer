@@ -6,12 +6,21 @@ coordinate system, including rig pose interpolation and camera intrinsics.
 """
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
 import torch
 
 from simple_nurec_viewer.utils.rigid import matrix_to_quaternion, slerp, build_rotation
+
+try:
+    from gsplat.cuda._wrapper import (
+        FThetaCameraDistortionParameters,
+        FThetaPolynomialType,
+    )
+except ImportError:
+    FThetaCameraDistortionParameters = None
+    FThetaPolynomialType = None
 
 
 @dataclass
@@ -212,6 +221,37 @@ def get_camera_intrinsics(
 
     else:
         raise ValueError(f"Unsupported camera model type: {camera_model_type}")
+
+
+def build_ftheta_coeffs(camera_calib: 'CameraCalibration') -> Optional[FThetaCameraDistortionParameters]:
+    """Build FTheta distortion coefficients from camera calibration.
+
+    Args:
+        camera_calib: CameraCalibration data object containing distortion parameters
+
+    Returns:
+        FThetaCameraDistortionParameters for gsplat rendering, or None if gsplat unavailable
+    """
+    if FThetaCameraDistortionParameters is None or FThetaPolynomialType is None:
+        return None
+
+    # Map string to enum
+    poly_type_map = {
+        "ANGLE_TO_PIXELDIST": FThetaPolynomialType.ANGLE_TO_PIXELDIST,
+        "PIXELDIST_TO_ANGLE": FThetaPolynomialType.PIXELDIST_TO_ANGLE,
+    }
+    reference_poly = poly_type_map.get(
+        camera_calib.reference_poly,
+        FThetaPolynomialType.ANGLE_TO_PIXELDIST
+    )
+
+    return FThetaCameraDistortionParameters(
+        reference_poly=reference_poly,
+        pixeldist_to_angle_poly=camera_calib.pixeldist_to_angle_poly,
+        angle_to_pixeldist_poly=camera_calib.angle_to_pixeldist_poly,
+        max_angle=camera_calib.max_angle,
+        linear_cde=camera_calib.linear_cde,
+    )
 
 
 def validate_transform_chain(

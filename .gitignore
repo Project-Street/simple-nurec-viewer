@@ -5,7 +5,7 @@
 /tmp
 /.specify
 /specs
-/outputs
+/outputs*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
