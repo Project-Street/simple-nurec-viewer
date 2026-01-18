@@ -35,6 +35,9 @@ conda activate nurec
 
 3. Install dependencies:
 ```bash
+# Install torch
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
 # Install nvdiffrast
 pip install git+https://github.com/NVlabs/nvdiffrast.git --no-build-isolation
 

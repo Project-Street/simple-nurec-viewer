@@ -254,6 +254,7 @@ def render_fn(
 def add_camera_trajectories(
     server: viser.ViserServer,
     trajectories: dict,
+    world_to_nre: Optional[np.ndarray] = None,
 ) -> None:
     """
     Add camera trajectory visualization to the viewer.
@@ -261,23 +262,28 @@ def add_camera_trajectories(
     Args:
         server: Viser server instance
         trajectories: Trajectory data from rig_trajectories.json
+        world_to_nre: Optional world_to_nre transformation matrix [4, 4]
     """
     if not trajectories:
         return
 
     T_rig_worlds = trajectories["T_rig_worlds"]
 
-    # Extract positions from transformation matrices
-    positions = []
+    # Extract camera centers from transformation matrices
+    camera_centers = []
     for T in T_rig_worlds:
-        T_mat = np.array(T)  # Convert to numpy array first
-        pos = T_mat[:3, 3]  # Extract translation
-        positions.append(pos)
+        T_mat = np.array(T)
+        camera_centers.append(T_mat[:3, 3])  # Extract translation (camera center position)
 
-    positions = np.array(positions)
+    camera_centers = np.array(camera_centers)
+
+    # Apply world_to_nre transformation if available
+    if world_to_nre is not None:
+        T_base = world_to_nre
+        camera_centers = camera_centers @ T_base[:3, :3].T + T_base[:3, 3]
 
     # Prepare line segments: shape (N, 2, 3) where N is number of segments
-    segments = np.stack([positions[:-1], positions[1:]], axis=1)  # (N-1, 2, 3)
+    segments = np.stack([camera_centers[:-1], camera_centers[1:]], axis=1)  # (N-1, 2, 3)
 
     # Add trajectory as line segments
     server.scene.add_line_segments(
@@ -287,12 +293,12 @@ def add_camera_trajectories(
         line_width=2.0,
     )
 
-    print(f"Added camera trajectory with {len(positions)} poses")
+    print(f"Added camera trajectory with {len(camera_centers)} poses")
 
 
 def load_nurec_data(
     usdz_path: str, device: torch.device
-) -> Tuple[GaussianSet, Optional[dict], Optional[SkyCubeMap], Optional[dict]]:
+) -> Tuple[GaussianSet, Optional[dict], Optional[SkyCubeMap], Optional[dict], Optional[np.ndarray]]:
     """
     Load NuRec USDZ file and extract Gaussian parameters.
 
@@ -301,7 +307,7 @@ def load_nurec_data(
         device: Torch device to load tensors to
 
     Returns:
-        Tuple of (GaussianSet, camera_trajectories, sky_cubemap, tracks_data)
+        Tuple of (GaussianSet, camera_trajectories, sky_cubemap, tracks_data, world_to_nre)
     """
     # Extract USDZ to temp directory
     with tempfile.TemporaryDirectory(dir="./tmp") as tmpdir:
@@ -337,18 +343,28 @@ def load_nurec_data(
         gaussian_set = GaussianSet.from_checkpoint(str(ckpt_path), device, tracks_data=tracks_data)
         gaussian_set.print_summary()
 
-        # Load camera trajectories from rig_trajectories.json
-        traj_path = Path(tmpdir) / "rig_trajectories.json"
+        # Load camera trajectories from datasource_summary.json
+        # Note: rig_trajectories.json is not included in USDZ, use datasource_summary.json instead
+        datasource_path = Path(tmpdir) / "datasource_summary.json"
         trajectories = None
-        if traj_path.exists():
-            print(f"Loading camera trajectories from {traj_path}...")
-            with open(traj_path, "r") as f:
-                rig_data = json.load(f)
-            trajectories = rig_data["rig_trajectories"][0]
-            T_rig_worlds = trajectories["T_rig_worlds"]
-            print(f"Loaded {len(T_rig_worlds)} camera poses")
+        world_to_nre = None
+        if datasource_path.exists():
+            print(f"Loading camera trajectories from {datasource_path}...")
+            with open(datasource_path, "r") as f:
+                datasource_data = json.load(f)
+            rig_traj_data = datasource_data.get("rig_trajectories", {})
+            if "rig_trajectories" in rig_traj_data and len(rig_traj_data["rig_trajectories"]) > 0:
+                trajectories = rig_traj_data["rig_trajectories"][0]
+                T_rig_worlds = trajectories["T_rig_worlds"]
+                print(f"Loaded {len(T_rig_worlds)} camera poses")
+            else:
+                print("No rig_trajectories found in datasource_summary.json")
+            # Load world_to_nre transformation
+            if "world_to_nre" in rig_traj_data and "matrix" in rig_traj_data["world_to_nre"]:
+                world_to_nre = np.array(rig_traj_data["world_to_nre"]["matrix"])
+                print(f"Loaded world_to_nre transformation matrix")
         else:
-            print("No rig_trajectories.json found")
+            print("No datasource_summary.json found")
 
         # Load sky cubemap texture from checkpoint
         sky_cubemap = None
@@ -363,4 +379,4 @@ def load_nurec_data(
             print("No sky cubemap found in checkpoint")
         del ckpt  # Free memory
 
-        return gaussian_set, trajectories, sky_cubemap, tracks_data
+        return gaussian_set, trajectories, sky_cubemap, tracks_data, world_to_nre

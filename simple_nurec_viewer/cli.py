@@ -6,7 +6,6 @@ with interactive 3D Gaussian Splatting rendering.
 """
 
 import argparse
-from typing import Optional
 import time
 
 import torch
@@ -27,7 +26,7 @@ Examples:
   %(prog)s --port 9000 path/to/file.usdz
   %(prog)s --device cpu path/to/file.usdz
   %(prog)s --port 8080 --device cuda path/to/file.usdz
-        """
+        """,
     )
     parser.add_argument(
         "usdz",
@@ -35,14 +34,16 @@ Examples:
         help="Path to the USDZ file",
     )
     parser.add_argument(
-        "-p", "--port",
+        "-p",
+        "--port",
         type=int,
         default=8080,
         metavar="PORT",
         help="Port for the viewer server (default: 8080)",
     )
     parser.add_argument(
-        "-d", "--device",
+        "-d",
+        "--device",
         type=str,
         default="cuda",
         choices=["cuda", "cpu"],
@@ -50,9 +51,10 @@ Examples:
         help="Device to use for rendering (default: cuda)",
     )
     parser.add_argument(
-        "-v", "--version",
+        "-v",
+        "--version",
         action="version",
-        version=f"%(prog)s 0.1.0",
+        version="%(prog)s 0.1.0",
     )
     args = parser.parse_args()
 
@@ -67,8 +69,8 @@ Examples:
     print(f"\nLoading NuRec data from {args.usdz}")
     print("=" * 60)
     try:
-        gaussian_set, trajectories, sky_cubemap, tracks_data = load_nurec_data(args.usdz, device)
-    except FileNotFoundError as e:
+        gaussian_set, trajectories, sky_cubemap, tracks_data, world_to_nre = load_nurec_data(args.usdz, device)
+    except FileNotFoundError:
         print(f"Error: File not found: {args.usdz}")
         return 1
     except Exception as e:
@@ -89,7 +91,7 @@ Examples:
 
     # Add camera trajectories to viewer (if available)
     if trajectories:
-        add_camera_trajectories(server, trajectories)
+        add_camera_trajectories(server, trajectories, world_to_nre)
 
     # Detect time range from tracks_data
     if gaussian_set.rigids is not None and tracks_data is not None:
@@ -123,8 +125,10 @@ Examples:
         time_max = 480.0
 
     # Create render wrapper that includes timestamp
-    # Store slider reference for use in render_wrapper
+    # Store slider and playing state for use in render_wrapper
     slider_ref = [None]  # Use list to allow assignment in nested function
+    is_playing_ref = [False]  # Track play/pause state
+    playback_thread_ref = [None]  # Track playback thread
 
     def render_wrapper(camera_state, render_tab_state):
         # Use normalized time + offset for absolute timestamp
@@ -136,17 +140,11 @@ Examples:
 
         return render_fn(camera_state, render_tab_state, gaussian_set, sky_cubemap, device, timestamp=abs_timestamp)
 
-    # Create nerfview viewer with layered rendering and sky cubemap
-    # This will add camera control sliders automatically
-    viewer = nerfview.Viewer(
-        server=server,
-        render_fn=render_wrapper,
-        mode="rendering",
-    )
-
-    # Add timeline slider AFTER viewer creation to avoid conflicts
-    # This slider will coexist with the camera control sliders
+    # Add timeline slider and playback button BEFORE viewer creation to appear at top
+    # These controls will coexist with the camera control sliders
     if gaussian_set.rigids is not None:
+        import threading
+
         slider = server.gui.add_slider(
             "Timeline (s)",
             min=time_min,
@@ -158,6 +156,64 @@ Examples:
 
         print(f"Added timeline slider: {time_min}s to {time_max}s")
 
+        # Add playback button
+        play_button = server.gui.add_button(
+            "Play",
+            icon=viser.Icon.PLAYER_PLAY,
+        )
+
+        # Playback function running in separate thread
+        def playback_loop():
+            """Playback loop running at 10fps"""
+            sleep_time_min = 2.0
+            frame_duration = 0.1
+
+            while is_playing_ref[0]:
+                start_time = time.time()
+
+                # Update timeline
+                current_time = slider_ref[0].value
+                next_time = current_time + frame_duration
+
+                # Loop back to start if at end
+                if next_time >= time_max:
+                    next_time = time_min
+
+                slider_ref[0].value = next_time
+
+                # Trigger re-render
+                if viewer is not None:
+                    viewer.rerender(None)
+
+                # Sleep for remaining frame time
+                elapsed = time.time() - start_time
+                sleep_time = sleep_time_min + frame_duration - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
+        # Button click handler
+        @play_button.on_click
+        def _(event):
+            if not is_playing_ref[0]:
+                # Start playing
+                is_playing_ref[0] = True
+                playback_thread_ref[0] = threading.Thread(target=playback_loop, daemon=True)
+                playback_thread_ref[0].start()
+
+                # Update button to show pause option
+                play_button.label = "Pause"
+                play_button.icon = viser.Icon.PLAYER_PAUSE
+            else:
+                # Pause playback
+                is_playing_ref[0] = False
+                if playback_thread_ref[0] is not None:
+                    playback_thread_ref[0].join(timeout=1.0)
+                    playback_thread_ref[0] = None
+
+                # Update button back to play
+                play_button.label = "Play"
+                play_button.icon = viser.Icon.PLAYER_PLAY
+
         # Setup slider update callback to trigger re-render
         @slider.on_update
         def _(_):
@@ -165,9 +221,17 @@ Examples:
             if viewer is not None:
                 viewer.rerender(None)
 
+    # Create nerfview viewer with layered rendering and sky cubemap
+    # This will add camera control sliders automatically
+    viewer = nerfview.Viewer(
+        server=server,
+        render_fn=render_wrapper,
+        mode="rendering",
+    )
+
     print(f"\nViewer running at http://localhost:{args.port}")
     if gaussian_set.rigids is not None:
-        print("Use the timeline slider to animate rigid bodies")
+        print("Use the Play button or timeline slider to animate rigid bodies")
     print("Press Ctrl+C to exit\n")
 
     # Keep the viewer running
@@ -181,4 +245,5 @@ Examples:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())
