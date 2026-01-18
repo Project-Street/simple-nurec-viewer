@@ -196,17 +196,16 @@ class RigidGaussian(BaseGaussian):
 
     def collect(
         self,
-        timestamp: Optional[float] = None,
-        viewmat: Optional[torch.Tensor] = None,
-        sh_degree: int = 3
+        **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Transform features into render-ready Gaussian parameters with rigid transform.
 
         Args:
-            timestamp: Optional timestamp for rigid transform (seconds)
-            viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-            sh_degree: Spherical harmonics degree (default: 3)
+            **kwargs: Optional parameters including:
+                - timestamp: Optional timestamp for rigid transform (seconds)
+                - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
+                - sh_degree: Spherical harmonics degree (default: 3)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -216,6 +215,10 @@ class RigidGaussian(BaseGaussian):
             - opacities: Opacities (sigmoid activated) [N]
             - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 20, 3]
         """
+        timestamp = kwargs.get('timestamp', None)
+        viewmat = kwargs.get('viewmat', None)
+        sh_degree = kwargs.get('sh_degree', 3)
+
         # Get base Gaussian parameters using the default implementation
         means, quats, scales, opacities, colors = self._collect_impl(viewmat, sh_degree)
 

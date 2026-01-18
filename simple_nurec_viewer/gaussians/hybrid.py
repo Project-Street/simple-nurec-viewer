@@ -52,9 +52,7 @@ class HybridGaussian(BaseGaussian):
 
     def collect(
         self,
-        timestamp: Optional[float] = None,
-        viewmat: Optional[torch.Tensor] = None,
-        sh_degree: int = 3
+        **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Collect render-ready parameters from all managed Gaussians.
@@ -63,9 +61,10 @@ class HybridGaussian(BaseGaussian):
         along the first dimension (number of Gaussians).
 
         Args:
-            timestamp: Optional timestamp for rigid transforms (seconds)
-            viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-            sh_degree: Spherical harmonics degree (default: 3)
+            **kwargs: Optional parameters including:
+                - timestamp: Optional timestamp for rigid transforms (seconds)
+                - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
+                - sh_degree: Spherical harmonics degree (default: 3)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -86,11 +85,7 @@ class HybridGaussian(BaseGaussian):
         for gaussian in self.gaussians:
             # For RigidGaussian, pass timestamp; for BaseGaussian, it will be ignored
             if hasattr(gaussian, 'collect'):
-                means, quats, scales, opacities, colors = gaussian.collect(
-                    timestamp=timestamp,
-                    viewmat=viewmat,
-                    sh_degree=sh_degree
-                )
+                means, quats, scales, opacities, colors = gaussian.collect(**kwargs)
             else:
                 raise TypeError(f"Gaussian object {type(gaussian)} does not have collect() method")
 

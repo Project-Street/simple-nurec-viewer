@@ -26,10 +26,10 @@ from .sky import SkyCubeMap, generate_ray_directions
 
 class GaussianSet:
     """
-    Manages a collection of Gaussian groups (background + road + rigids).
+    Manages a collection of Gaussian groups using HybridGaussian.
 
     This class loads Gaussian data from a checkpoint and provides
-    separate access to background, road, and rigid Gaussians.
+    unified access to all Gaussians through a HybridGaussian aggregator.
     """
 
     def __init__(self, state_dict: dict, device: torch.device, tracks_data: Optional[dict] = None):
@@ -43,11 +43,8 @@ class GaussianSet:
         """
         self.device = device
 
-        # Import here to avoid circular dependency
-        from ..gaussians.base import BaseGaussian
-
         # Create background Gaussian using BaseGaussian
-        self.background = BaseGaussian(
+        background = BaseGaussian(
             positions=state_dict["model.gaussians_nodes.background.positions"],
             rotations=state_dict["model.gaussians_nodes.background.rotations"],
             scales=state_dict["model.gaussians_nodes.background.scales"],
@@ -58,7 +55,7 @@ class GaussianSet:
         )
 
         # Create road Gaussian using BaseGaussian
-        self.road = BaseGaussian(
+        road = BaseGaussian(
             positions=state_dict["model.gaussians_nodes.road.positions"],
             rotations=state_dict["model.gaussians_nodes.road.rotations"],
             scales=state_dict["model.gaussians_nodes.road.scales"],
@@ -68,10 +65,13 @@ class GaussianSet:
             device=device,
         )
 
+        # Collect all Gaussians to aggregate
+        gaussian_list = [background, road]
+
         # Extract rigid Gaussians if available
         dr_key = "model.gaussians_nodes.dynamic_rigids.positions"
         if dr_key in state_dict and state_dict[dr_key].shape[0] > 0:
-            self.rigids = RigidGaussian(
+            rigids = RigidGaussian(
                 positions=state_dict["model.gaussians_nodes.dynamic_rigids.positions"],
                 rotations=state_dict["model.gaussians_nodes.dynamic_rigids.rotations"],
                 scales=state_dict["model.gaussians_nodes.dynamic_rigids.scales"],
@@ -82,8 +82,17 @@ class GaussianSet:
                 tracks_data=tracks_data,
                 device=device,
             )
+            gaussian_list.append(rigids)
+            self.rigids = rigids
         else:
             self.rigids = None
+
+        # Create HybridGaussian to aggregate all Gaussian groups
+        self.hybrid = HybridGaussian(gaussian_list)
+
+        # Keep references for backward compatibility
+        self.background = background
+        self.road = road
 
     @classmethod
     def from_checkpoint(cls, ckpt_path: str, device: torch.device, tracks_data: Optional[dict] = None):
@@ -106,7 +115,7 @@ class GaussianSet:
         bg_count = self.background.positions.shape[0]
         road_count = self.road.positions.shape[0]
         rigid_count = self.rigids.positions.shape[0] if self.rigids is not None else 0
-        total_count = bg_count + road_count + rigid_count
+        total_count = self.hybrid.get_gaussian_count()
 
         print("Loaded GaussianSet:")
         print(f"  Background: {bg_count:,} Gaussians")
@@ -215,29 +224,11 @@ def render_fn(
     K = torch.from_numpy(camera_state.get_K([width, height])).float().to(device)
     viewmat = c2w.inverse()
 
-    # Collect background and road Gaussians with SH-to-RGB conversion
-    bg_means, bg_quats, bg_scales, bg_opacities, bg_colors = gaussian_set.background.collect(viewmat=viewmat)
-    road_means, road_quats, road_scales, road_opacities, road_colors = gaussian_set.road.collect(viewmat=viewmat)
-
-    # Collect rigid Gaussians if available and timestamp is provided
-    if gaussian_set.rigids is not None and timestamp is not None:
-        rigid_means, rigid_quats, rigid_scales, rigid_opacities, rigid_colors = gaussian_set.rigids.collect(
-            timestamp=timestamp, viewmat=viewmat
-        )
-
-        # Merge all Gaussians
-        means = torch.cat((bg_means, road_means, rigid_means), dim=0)
-        quats = torch.cat((bg_quats, road_quats, rigid_quats), dim=0)
-        scales = torch.cat((bg_scales, road_scales, rigid_scales), dim=0)
-        opacities = torch.cat((bg_opacities, road_opacities, rigid_opacities), dim=0)
-        colors = torch.cat((bg_colors, road_colors, rigid_colors), dim=0)
-    else:
-        # Merge background and road Gaussians only
-        means = torch.cat((bg_means, road_means), dim=0)
-        quats = torch.cat((bg_quats, road_quats), dim=0)
-        scales = torch.cat((bg_scales, road_scales), dim=0)
-        opacities = torch.cat((bg_opacities, road_opacities), dim=0)
-        colors = torch.cat((bg_colors, road_colors), dim=0)
+    # Collect all Gaussians using HybridGaussian
+    # HybridGaussian handles merging of background, road, and rigid Gaussians
+    means, quats, scales, opacities, colors = gaussian_set.hybrid.collect(
+        timestamp=timestamp, viewmat=viewmat
+    )
 
     # Render Gaussians with alpha channel for blending
     rgb, alpha = render_gaussians(

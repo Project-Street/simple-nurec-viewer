@@ -60,21 +60,22 @@ class BaseGaussian(ABC):
         self.features_specular = features_specular.to(device)
         self.device = device
 
-    @abstractmethod
     def collect(
         self,
-        viewmat: Optional[torch.Tensor] = None,
-        sh_degree: int = 3
+        **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Transform features into render-ready Gaussian parameters.
 
-        This method must be implemented by subclasses to provide specific
-        transformation logic (e.g., rigid body transforms for dynamic Gaussians).
+        This method provides the default implementation for static Gaussians.
+        Subclasses can override this to provide specific transformation logic
+        (e.g., rigid body transforms for dynamic Gaussians).
 
         Args:
-            viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-            sh_degree: Spherical harmonics degree (default: 3)
+            **kwargs: Optional parameters including:
+                - timestamp: Optional timestamp for rigid transforms (ignored by BaseGaussian)
+                - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
+                - sh_degree: Spherical harmonics degree (default: 3)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -84,7 +85,9 @@ class BaseGaussian(ABC):
             - opacities: Opacities (sigmoid activated) [N]
             - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 20, 3]
         """
-        pass
+        viewmat = kwargs.get('viewmat', None)
+        sh_degree = kwargs.get('sh_degree', 3)
+        return self._collect_impl(viewmat, sh_degree)
 
     def _collect_impl(
         self,
