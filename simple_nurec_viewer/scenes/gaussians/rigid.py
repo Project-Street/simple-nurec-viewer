@@ -5,12 +5,13 @@ This module provides the RigidGaussian class that extends BaseGaussian
 to support time-varying rigid body transforms from trajectory data.
 """
 
-from typing import Tuple, Optional
-import torch
-import numpy as np
+from typing import Optional, Tuple
 
+import numpy as np
+import torch
+
+from ...utils.rigid import build_rotation, quaternion_multiply, slerp
 from .base import BaseGaussian
-from ..utils.rigid import build_rotation, quaternion_multiply, slerp
 
 
 class RigidGaussian(BaseGaussian):

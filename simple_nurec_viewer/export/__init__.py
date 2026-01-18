@@ -5,19 +5,19 @@ This module provides tools to export rendered frames from NuRec USDZ files,
 including data loading, camera pose computation, and batch rendering.
 """
 
-from .loader import load_camera_data, CameraCalibration, RigTrajectory
 from .camera import (
-    compute_camera_pose_NRE,
-    interpolate_rig_pose,
+    CameraPose,
+    build_ftheta_coeffs,
     build_pinhole_K_from_ftheta,
     build_pinhole_K_from_pinhole,
+    compute_camera_pose_NRE,
     get_camera_intrinsics,
+    interpolate_rig_pose,
     validate_transform_chain,
-    build_ftheta_coeffs,
-    CameraPose,
 )
+from .loader import CameraCalibration, RigTrajectory, load_camera_data
 from .renderer import render_camera_frame
-from .writer import save_rendered_frame, create_output_directories, ExportTask
+from .writer import ExportTask, create_output_directories, save_rendered_frame
 
 __all__ = [
     # Data structures
@@ -59,67 +59,31 @@ def export_frames(task: ExportTask) -> None:
         ValueError: If required data is missing from USDZ
         RuntimeError: If rendering fails
     """
-    import zipfile
-    import tempfile
-    import json
-    from pathlib import Path
-    from tqdm import tqdm
-
     import numpy as np
     import torch
-    from simple_nurec_viewer.core.viewer import GaussianSet, SkyCubeMap
+    from tqdm import tqdm
 
+    from simple_nurec_viewer.core.loader import load_nurec_data
+
+    from .camera import compute_camera_pose_NRE, get_camera_intrinsics, interpolate_rig_pose
     from .loader import load_camera_data
-    from .camera import (
-        compute_camera_pose_NRE,
-        interpolate_rig_pose,
-        get_camera_intrinsics,
-    )
     from .renderer import render_camera_frame
-    from .writer import save_rendered_frame, create_output_directories
+    from .writer import create_output_directories, save_rendered_frame
 
     # Validate inputs
     if not task.usdz_path.exists():
         raise FileNotFoundError(f"USDZ file not found: {task.usdz_path}")
 
-    # Load GaussianSet from USDZ
-    print(f"Loading GaussianSet from {task.usdz_path}...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with zipfile.ZipFile(task.usdz_path, "r") as zip_ref:
-            zip_ref.extractall(tmpdir)
+    # Load NuRec data using shared loader
+    print(f"Loading NuRec data from {task.usdz_path}...")
+    data = load_nurec_data(
+        task.usdz_path,
+        task.device,
+        load_trajectories=False,  # We'll load camera data separately
+    )
 
-        ckpt_path = Path(tmpdir) / "checkpoint.ckpt"
-        if not ckpt_path.exists():
-            raise ValueError("checkpoint.ckpt not found in USDZ file")
-
-        # Load tracks data for rigid body animation from datasource_summary.json
-        tracks_data = None
-        datasource_path = Path(tmpdir) / "datasource_summary.json"
-        if datasource_path.exists():
-            print("Loading tracks data from datasource_summary.json...")
-            with open(datasource_path, "r") as f:
-                datasource_data = json.load(f)
-            # Extract dynamic tracks data
-            seq_tracks_dynamic = datasource_data.get("sequence_tracks_dynamic", {})
-            if seq_tracks_dynamic:
-                # Get the first (and only) entry
-                first_key = list(seq_tracks_dynamic.keys())[0]
-                tracks_data = seq_tracks_dynamic[first_key]
-                print(f"Loaded tracks data with {len(tracks_data.get('tracks_data', {}).get('tracks_id', []))} tracks")
-            else:
-                print("No sequence_tracks_dynamic found in datasource_summary.json")
-
-        # Load GaussianSet with tracks_data
-        gaussian_set = GaussianSet.from_checkpoint(str(ckpt_path), task.device, tracks_data=tracks_data)
-
-        # Load sky cubemap (optional)
-        sky_cubemap = None
-        ckpt = torch.load(ckpt_path, map_location=task.device, weights_only=False)
-        if "model.background.textures" in ckpt["state_dict"]:
-            tex = ckpt["state_dict"]["model.background.textures"].squeeze(0).to(task.device)
-            sky_cubemap = SkyCubeMap(tex)
-            print("Loaded sky cubemap")
-        del ckpt
+    gaussian_set = data.gaussian_set
+    sky_cubemap = data.sky_cubemap
 
     # Load camera data
     print("Loading camera data...")
@@ -201,7 +165,6 @@ def export_frames(task: ExportTask) -> None:
                 elif calib.camera_model_type == "pinhole":
                     # For pinhole, extract focal_length from parameters if available
                     # If not provided, estimate from resolution
-                    params = camera_calibrations[calib_key].camera_model_type
                     # Check if original calib data has focal_length
                     focal_length = getattr(calib, "focal_length", calib.resolution[0] * 0.8)  # Default estimate
                     K = get_camera_intrinsics(

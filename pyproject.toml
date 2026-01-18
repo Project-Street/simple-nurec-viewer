@@ -8,10 +8,8 @@ version = "0.1.0"
 description = "A 3D Gaussian Splatting viewer for NuRec USDZ files"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
+license = { text = "MIT" }
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
 keywords = ["3d", "gaussian-splatting", "nurec", "viewer", "visualization"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -43,15 +41,13 @@ dependencies = [
     "matplotlib>=3.7.0",
     "splines>=0.3.0",
     "tqdm>=4.65.0",
+
+    # CLI
+    "tyro>=0.8.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-]
+dev = ["pre-commit", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/your-org/simple-nurec-viewer"
@@ -59,22 +55,52 @@ Repository = "https://github.com/your-org/simple-nurec-viewer.git"
 Issues = "https://github.com/your-org/simple-nurec-viewer/issues"
 
 [project.scripts]
-simple-nurec-viewer = "simple_nurec_viewer.cli:main"
-simple-nurec-viewer-export = "simple_nurec_viewer.export.cli:main"
+# Unified CLI entry point
+simple-nurec = "simple_nurec_viewer.__main__:main"
 
 [tool.setuptools]
-packages = ["simple_nurec_viewer"]
+packages = [
+    "simple_nurec_viewer",
+    "simple_nurec_viewer.scenes",
+    "simple_nurec_viewer.scenes.gaussians",
+    "simple_nurec_viewer.cli",
+]
 
-[tool.black]
+# ruff
+[tool.ruff]
 line-length = 120
-target-version = ['py310']
+respect-gitignore = false
+lint.select = [
+  "E",      # pycodestyle errors.
+  "F",      # Pyflakes rules.
+  "I",      # isort formatting.
+  "PLC",    # Pylint convention warnings.
+  "PLE",    # Pylint errors.
+  "PLR",    # Pylint refactor recommendations.
+  "PLW",    # Pylint warnings.
+  "NPY201", # NumPY 2.0 migration https://numpy.org/devdocs/numpy_2_0_migration_guide.html#ruff-plugin
+]
+lint.ignore = [
+  "E501",    # Line too long.
+  "E731",    # Lambda function inline.
+  "F722",    # Forward annotation false positive from jaxtyping. Should be caught by pyright.
+  "F821",    # Forward annotation false positive from jaxtyping. Should be caught by pyright.
+  "PLR2004", # Magic value used in comparison.
+  "PLR0915", # Too many statements.
+  "PLR0913", # Too many arguments.
+  "PLC0414", # Import alias does not rename variable. (this is used for exporting names)
+  "PLC0415", # Import outside top level.
+  "PLC1901", # Use falsey strings.
+  "PLR5501", # Use `elif` instead of `else if`.
+  "PLR0911", # Too many return statements.
+  "PLR0912", # Too many branches.
+  "PLW0603", # Globa statement updates are discouraged.
+  "PLW2901", # For loop variable overwritten.
+  "PLR1730", # Replace if statement with min/max
+]
+extend-exclude = ["ref"]
 
-[tool.isort]
-profile = "black"
-line_length = 120
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["simple_nurec_viewer"]
+split-on-trailing-comma = false

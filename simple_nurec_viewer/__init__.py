@@ -7,8 +7,9 @@ using Gaussian Splatting with interactive web-based visualization.
 
 __version__ = "0.1.0"
 
-from simple_nurec_viewer.gaussians import BaseGaussian, RigidGaussian, HybridGaussian
-from simple_nurec_viewer.core import GaussianSet, SkyCubeMap, load_nurec_data
+from simple_nurec_viewer.core import GaussianSet, load_nurec_data
+from simple_nurec_viewer.scenes.gaussians import BaseGaussian, HybridGaussian, RigidGaussian
+from simple_nurec_viewer.scenes.sky import SkyCubeMap
 
 __all__ = [
     "BaseGaussian",

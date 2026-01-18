@@ -6,18 +6,15 @@ coordinate system, including rig pose interpolation and camera intrinsics.
 """
 
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
 
-from simple_nurec_viewer.utils.rigid import matrix_to_quaternion, slerp, build_rotation
+from simple_nurec_viewer.utils.rigid import build_rotation, matrix_to_quaternion, slerp
 
 try:
-    from gsplat.cuda._wrapper import (
-        FThetaCameraDistortionParameters,
-        FThetaPolynomialType,
-    )
+    from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
 except ImportError:
     FThetaCameraDistortionParameters = None
     FThetaPolynomialType = None
@@ -35,6 +32,7 @@ class CameraPose:
         K: 3x3 pinhole camera intrinsics matrix
         viewmat: 4x4 view matrix (NRE to camera transformation)
     """
+
     camera_name: str
     timestamp_us: int
     T_camera_NRE: np.ndarray  # [4, 4]
@@ -145,11 +143,7 @@ def build_pinhole_K_from_ftheta(
     focal_length = max_radius / np.tan(max_angle / 2)
 
     # Construct K matrix
-    K = np.array([
-        [focal_length, 0, cx],
-        [0, focal_length, cy],
-        [0, 0, 1]
-    ])
+    K = np.array([[focal_length, 0, cx], [0, focal_length, cy], [0, 0, 1]])
 
     return K
 
@@ -173,11 +167,7 @@ def build_pinhole_K_from_pinhole(
     cx, cy = principal_point
 
     # Construct K matrix
-    K = np.array([
-        [focal_length, 0, cx],
-        [0, focal_length, cy],
-        [0, 0, 1]
-    ])
+    K = np.array([[focal_length, 0, cx], [0, focal_length, cy], [0, 0, 1]])
 
     return K
 
@@ -223,7 +213,7 @@ def get_camera_intrinsics(
         raise ValueError(f"Unsupported camera model type: {camera_model_type}")
 
 
-def build_ftheta_coeffs(camera_calib: 'CameraCalibration') -> Optional[FThetaCameraDistortionParameters]:
+def build_ftheta_coeffs(camera_calib: "CameraCalibration") -> Optional[FThetaCameraDistortionParameters]:
     """Build FTheta distortion coefficients from camera calibration.
 
     Args:
@@ -240,10 +230,7 @@ def build_ftheta_coeffs(camera_calib: 'CameraCalibration') -> Optional[FThetaCam
         "ANGLE_TO_PIXELDIST": FThetaPolynomialType.ANGLE_TO_PIXELDIST,
         "PIXELDIST_TO_ANGLE": FThetaPolynomialType.PIXELDIST_TO_ANGLE,
     }
-    reference_poly = poly_type_map.get(
-        camera_calib.reference_poly,
-        FThetaPolynomialType.ANGLE_TO_PIXELDIST
-    )
+    reference_poly = poly_type_map.get(camera_calib.reference_poly, FThetaPolynomialType.ANGLE_TO_PIXELDIST)
 
     return FThetaCameraDistortionParameters(
         reference_poly=reference_poly,
@@ -303,10 +290,9 @@ def validate_transform_chain(
         print(f"T_sensor_rig:\n{T_sensor_rig}")
         print(f"\nT_rig_world:\n{T_rig_world}")
         print(f"\nworld_to_nre:\n{world_to_nre}")
-        print(f"\nT_camera_NRE = world_to_nre @ T_rig_world @ T_sensor_rig:")
+        print("\nT_camera_NRE = world_to_nre @ T_rig_world @ T_sensor_rig:")
         print(f"T_camera_NRE:\n{T_camera_NRE}")
         print(f"\nCamera position in NRE: {T_camera_NRE[:3, 3]}")
         print("=====================================\n")
 
     return True
-

@@ -1,107 +1,76 @@
 """
-Command-line interface for Simple NuRec Viewer.
+View subcommand for Simple NuRec Viewer.
 
-This module provides the CLI entry point for viewing NuRec USDZ files
-with interactive 3D Gaussian Splatting rendering.
+This module provides the view subcommand for interactively viewing
+NuRec USDZ files using 3D Gaussian Splatting.
 """
 
-import argparse
 import time
+from pathlib import Path
 
+import nerfview
 import torch
 import viser
-import nerfview
 
-from .core import load_nurec_data, render_fn, add_camera_trajectories
+from ..core.loader import load_nurec_data
+from ..core.viewer import add_camera_trajectories, render_fn
 
 
-def main():
-    """Main entry point for the NuRec viewer."""
-    parser = argparse.ArgumentParser(
-        description="Simple NuRec Viewer - View NuRec USDZ files using 3D Gaussian Splatting",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s path/to/file.usdz
-  %(prog)s --port 9000 path/to/file.usdz
-  %(prog)s --device cpu path/to/file.usdz
-  %(prog)s --port 8080 --device cuda path/to/file.usdz
-        """,
-    )
-    parser.add_argument(
-        "usdz",
-        type=str,
-        help="Path to the USDZ file",
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        type=int,
-        default=8080,
-        metavar="PORT",
-        help="Port for the viewer server (default: 8080)",
-    )
-    parser.add_argument(
-        "-d",
-        "--device",
-        type=str,
-        default="cuda",
-        choices=["cuda", "cpu"],
-        metavar="DEVICE",
-        help="Device to use for rendering (default: cuda)",
-    )
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version="%(prog)s 0.1.0",
-    )
-    args = parser.parse_args()
+def view(
+    usdz_path: Path,
+    port: int = 8080,
+    device: str = "cuda",
+) -> None:
+    """View a NuRec USDZ file interactively.
 
+    Args:
+        usdz_path: Path to the USDZ file
+        port: Port for the viewer server (default: 8080)
+        device: Device to use for rendering (default: "cuda")
+    """
     # Validate device
-    if args.device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.cuda.is_available():
         print("Error: CUDA requested but not available. Use --device cpu or install CUDA.")
-        return 1
+        return
 
-    device = torch.device(args.device)
+    torch_device = torch.device(device)
 
     # Load NuRec data
-    print(f"\nLoading NuRec data from {args.usdz}")
+    print(f"\nLoading NuRec data from {usdz_path}")
     print("=" * 60)
     try:
-        gaussian_set, trajectories, sky_cubemap, tracks_data, world_to_nre = load_nurec_data(args.usdz, device)
+        data = load_nurec_data(usdz_path, torch_device)
     except FileNotFoundError:
-        print(f"Error: File not found: {args.usdz}")
-        return 1
+        print(f"Error: File not found: {usdz_path}")
+        return
     except Exception as e:
         print(f"Error: Failed to load NuRec data: {e}")
-        return 1
+        return
     print("=" * 60)
 
     # Setup viewer
-    print(f"\nStarting viewer server on port {args.port}...")
+    print(f"\nStarting viewer server on port {port}...")
     try:
-        server = viser.ViserServer(port=args.port, verbose=False)
+        server = viser.ViserServer(port=port, verbose=False)
     except OSError as e:
         if "already in use" in str(e):
-            print(f"Error: Port {args.port} already in use. Use --port to specify a different port.")
+            print(f"Error: Port {port} already in use. Use --port to specify a different port.")
         else:
             print(f"Error: Failed to start server: {e}")
-        return 1
+        return
 
     # Add camera trajectories to viewer (if available)
-    if trajectories:
-        add_camera_trajectories(server, trajectories, world_to_nre)
+    if data.camera_trajectories:
+        add_camera_trajectories(server, data.camera_trajectories, data.world_to_nre)
 
     # Detect time range from tracks_data
-    if gaussian_set.rigids is not None and tracks_data is not None:
+    if data.gaussian_set.rigids is not None and data.tracks_data is not None:
         import numpy as np
 
-        tracks_dict = tracks_data.get("tracks_data", {})
+        tracks_dict = data.tracks_data.get("tracks_data", {})
         timestamps_us_list = tracks_dict.get("tracks_timestamps_us", [])
 
         # Find global time range
-        # tracks_timestamps_us is a list of lists, one per track
         all_min_times = []
         all_max_times = []
         for timestamps_us in timestamps_us_list:
@@ -125,24 +94,24 @@ Examples:
         time_max = 480.0
 
     # Create render wrapper that includes timestamp
-    # Store slider and playing state for use in render_wrapper
-    slider_ref = [None]  # Use list to allow assignment in nested function
-    is_playing_ref = [False]  # Track play/pause state
-    playback_thread_ref = [None]  # Track playback thread
+    slider_ref = [None]
+    is_playing_ref = [False]
+    playback_thread_ref = [None]
 
     def render_wrapper(camera_state, render_tab_state):
         # Use normalized time + offset for absolute timestamp
-        # Read current value from slider if rigids exist
-        if gaussian_set.rigids is not None and slider_ref[0] is not None:
+        if data.gaussian_set.rigids is not None and slider_ref[0] is not None:
             abs_timestamp = slider_ref[0].value + time_offset
         else:
             abs_timestamp = None
 
-        return render_fn(camera_state, render_tab_state, gaussian_set, sky_cubemap, device, timestamp=abs_timestamp)
+        return render_fn(
+            camera_state, render_tab_state, data.gaussian_set, data.sky_cubemap, torch_device, timestamp=abs_timestamp
+        )
 
-    # Add timeline slider and playback button BEFORE viewer creation to appear at top
-    # These controls will coexist with the camera control sliders
-    if gaussian_set.rigids is not None:
+    # Add timeline slider and playback button
+    viewer = None  # Will be set after viewer creation
+    if data.gaussian_set.rigids is not None:
         import threading
 
         slider = server.gui.add_slider(
@@ -152,7 +121,7 @@ Examples:
             step=0.1,
             initial_value=time_min,
         )
-        slider_ref[0] = slider  # Store reference for render_wrapper
+        slider_ref[0] = slider
 
         print(f"Added timeline slider: {time_min}s to {time_max}s")
 
@@ -221,16 +190,15 @@ Examples:
             if viewer is not None:
                 viewer.rerender(None)
 
-    # Create nerfview viewer with layered rendering and sky cubemap
-    # This will add camera control sliders automatically
+    # Create nerfview viewer
     viewer = nerfview.Viewer(
         server=server,
         render_fn=render_wrapper,
         mode="rendering",
     )
 
-    print(f"\nViewer running at http://localhost:{args.port}")
-    if gaussian_set.rigids is not None:
+    print(f"\nViewer running at http://localhost:{port}")
+    if data.gaussian_set.rigids is not None:
         print("Use the Play button or timeline slider to animate rigid bodies")
     print("Press Ctrl+C to exit\n")
 
@@ -240,10 +208,6 @@ Examples:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down viewer...")
-        return 0
 
 
-if __name__ == "__main__":
-    import sys
-
-    sys.exit(main())
+__all__ = ["view"]

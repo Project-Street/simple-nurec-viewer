@@ -5,13 +5,13 @@ This module provides functions to extract and parse camera calibration
 and trajectory data from USDZ archives.
 """
 
+import json
 import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import json
 import numpy as np
 
 
@@ -32,6 +32,7 @@ class CameraCalibration:
         reference_poly: Reference polynomial type for ftheta distortion
         shutter_type: Shutter type (GLOBAL or ROLLING)
     """
+
     logical_sensor_name: str
     T_sensor_rig: np.ndarray  # [4, 4]
     camera_model_type: str
@@ -56,15 +57,14 @@ class RigTrajectory:
         T_rig_world_timestamps_us: Rig trajectory timestamps in microseconds
         cameras_frame_timestamps_us: Camera frame timestamps per camera
     """
+
     sequence_id: str
     T_rig_worlds: List[np.ndarray]  # List of [4, 4] matrices
     T_rig_world_timestamps_us: List[int]
     cameras_frame_timestamps_us: Dict[str, List[List[int]]]
 
 
-def load_camera_data(
-    usdz_path: Path
-) -> Tuple[Dict[str, CameraCalibration], RigTrajectory, np.ndarray]:
+def load_camera_data(usdz_path: Path) -> Tuple[Dict[str, CameraCalibration], RigTrajectory, np.ndarray]:
     """Load camera calibration and trajectory data from USDZ file.
 
     Args:
@@ -103,8 +103,8 @@ def load_camera_data(
                 resolution=tuple(params["resolution"]),
                 principal_point=tuple(params["principal_point"]),
                 max_angle=params.get("max_angle", 0.0),
-                pixeldist_to_angle_poly=tuple(params.get("pixeldist_to_angle_poly", [0.0]*6)),
-                angle_to_pixeldist_poly=tuple(params.get("angle_to_pixeldist_poly", [0.0]*6)),
+                pixeldist_to_angle_poly=tuple(params.get("pixeldist_to_angle_poly", [0.0] * 6)),
+                angle_to_pixeldist_poly=tuple(params.get("angle_to_pixeldist_poly", [0.0] * 6)),
                 linear_cde=tuple(params.get("linear_cde", [1.0, 0.0, 0.0])),
                 reference_poly=params.get("reference_poly", "ANGLE_TO_PIXELDIST"),
                 shutter_type=params.get("shutter_type", "GLOBAL"),

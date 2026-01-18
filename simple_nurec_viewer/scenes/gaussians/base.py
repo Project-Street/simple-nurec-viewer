@@ -6,7 +6,8 @@ defining the common interface for Gaussian parameter management and rendering.
 """
 
 from abc import ABC
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
 import torch
 import torch.nn.functional as F
 from gsplat.cuda._wrapper import spherical_harmonics

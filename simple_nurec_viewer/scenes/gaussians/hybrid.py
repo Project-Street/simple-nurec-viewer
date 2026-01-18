@@ -5,7 +5,8 @@ This module provides the HybridGaussian class that acts as a proxy
 to aggregate multiple Gaussian objects and merge their collect() outputs.
 """
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple
+
 import torch
 
 from .base import BaseGaussian
@@ -50,10 +51,7 @@ class HybridGaussian(BaseGaussian):
         self.features_albedo = None  # Not applicable for aggregated Gaussians
         self.features_specular = None  # Not applicable for aggregated Gaussians
 
-    def collect(
-        self,
-        **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collect(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Collect render-ready parameters from all managed Gaussians.
 
@@ -84,7 +82,7 @@ class HybridGaussian(BaseGaussian):
 
         for gaussian in self.gaussians:
             # For RigidGaussian, pass timestamp; for BaseGaussian, it will be ignored
-            if hasattr(gaussian, 'collect'):
+            if hasattr(gaussian, "collect"):
                 means, quats, scales, opacities, colors = gaussian.collect(**kwargs)
             else:
                 raise TypeError(f"Gaussian object {type(gaussian)} does not have collect() method")

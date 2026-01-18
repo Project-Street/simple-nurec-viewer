@@ -123,9 +123,7 @@ def generate_ray_directions(H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) 
 
     # Create pixel grid (0 to W-1, 0 to H-1)
     i, j = torch.meshgrid(
-        torch.linspace(0, W - 1, W, device=device),
-        torch.linspace(0, H - 1, H, device=device),
-        indexing="xy"
+        torch.linspace(0, W - 1, W, device=device), torch.linspace(0, H - 1, H, device=device), indexing="xy"
     )  # i: [W,], j: [H,] -> meshgrid -> [H, W] each
 
     # Extract focal lengths and principal point from intrinsic matrix

@@ -8,7 +8,6 @@ and trajectory interpolation. Adapted from EasyDrive.
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple
 
 
 def quaternion_multiply(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -63,8 +62,7 @@ def build_rotation(r: torch.Tensor) -> torch.Tensor:
     return R
 
 
-def slerp(v1: torch.Tensor, v2: torch.Tensor, t: float,
-          DOT_THR: float = 0.9995, dim: int = -1) -> torch.Tensor:
+def slerp(v1: torch.Tensor, v2: torch.Tensor, t: float, DOT_THR: float = 0.9995, dim: int = -1) -> torch.Tensor:
     """
     SLERP (Spherical Linear Interpolation) for pytorch tensors.
 
@@ -106,10 +104,7 @@ def slerp(v1: torch.Tensor, v2: torch.Tensor, t: float,
 
 
 def apply_rigid_transform(
-    positions: torch.Tensor,
-    rotation: torch.Tensor,
-    translation: torch.Tensor,
-    per_point_rotations: torch.Tensor = None
+    positions: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor, per_point_rotations: torch.Tensor = None
 ) -> torch.Tensor:
     """
     Apply rigid body transformation to positions.
@@ -137,10 +132,7 @@ def apply_rigid_transform(
         # Build per-point rotation matrices
         R_per_point = build_rotation(per_point_rotations)  # [N, 3, 3]
         # Apply per-point rotation
-        transformed = torch.bmm(
-            R_per_point,
-            positions.unsqueeze(-1)
-        ).squeeze(-1) @ R.T + translation
+        transformed = torch.bmm(R_per_point, positions.unsqueeze(-1)).squeeze(-1) @ R.T + translation
 
     return transformed
 
@@ -155,6 +147,7 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     Returns:
         Quaternions with real part first, as tensor of shape (..., 4).
     """
+
     def _sqrt_positive_part(x: torch.Tensor) -> torch.Tensor:
         """
         Returns torch.sqrt(torch.max(0, x))
@@ -169,9 +162,7 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
         raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
 
     batch_dim = matrix.shape[:-2]
-    m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(
-        matrix.reshape(batch_dim + (9,)), dim=-1
-    )
+    m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(matrix.reshape(batch_dim + (9,)), dim=-1)
 
     q_abs = _sqrt_positive_part(
         torch.stack(
@@ -201,6 +192,4 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     quat_candidates = quat_by_rijk / (2.0 * q_abs[..., None].max(flr))
 
     # Pick the best-conditioned quaternion (with the largest denominator)
-    return quat_candidates[
-        F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
-    ].reshape(batch_dim + (4,))
+    return quat_candidates[F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :].reshape(batch_dim + (4,))

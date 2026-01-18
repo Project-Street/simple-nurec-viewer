@@ -7,7 +7,7 @@ output directory structure.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -29,6 +29,7 @@ class ExportTask:
         overwrite: Whether to overwrite existing files
         debug: Whether to enable debug output for coordinate transforms
     """
+
     usdz_path: Path
     output_dir: Path
     cameras: Optional[List[str]] = None
