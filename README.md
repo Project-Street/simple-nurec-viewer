@@ -2,6 +2,14 @@
 
 A lightweight 3D Gaussian Splatting viewer for NuRec USDZ files with interactive web-based visualization and camera frame export capabilities.
 
+## Warning & Disclaimer ⚠️
+
+- **NOT affiliated with NVIDIA** - Independent implementation
+- **Educational/research use only** - Commercial use prohibited
+- Requires [NVIDIA dataset license](https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles-NuRec) compliance
+- gRPC server for debugging only (not AlphaSim API compliant)
+- Use at your own risk - No warranties provided
+
 ## Features
 
 - **Interactive 3D Visualization**: Web-based viewer for real-time exploration of NuRec scenes
@@ -284,7 +292,3 @@ Additional guidelines:
 - [ ] Specular feature for Gaussian rendering
   - [ ] Requires migration from gsplat to original 3dgrut renderer
 - [ ] Deformable Gaussian support
-
-## License
-
-MIT License

@@ -1,0 +1,131 @@
+SIMPLE NUREC VIEWER LICENSE
+
+Copyright (c) 2025 Simple NuRec Viewer Contributors
+
+This license governs the use of the Simple NuRec Viewer software ("Software").
+By using, modifying, or distributing this Software, you agree to the following terms:
+
+---
+
+1. GRANT OF LICENSE
+
+Subject to the terms and conditions of this license, we grant you a
+non-exclusive, non-transferable, non-sublicensable license to:
+
+a) Use the Software for personal, educational, and research purposes
+b) Modify the Software for your own internal use
+c) Distribute the Software's source code under this exact license
+
+This grant is personal to you and you may NOT:
+
+a) Sublicense, transfer, assign, or convey the Software to any third party
+b) Use the Software for commercial purposes or production environments
+c) Remove or alter any copyright, license, or proprietary notices
+
+---
+
+2. NVIDIA DATASET REQUIREMENTS
+
+The Software is designed to work with NVIDIA's PhysicalAI-Autonomous-Vehicles-NuRec
+dataset ("NVIDIA Dataset"). Your use of the Software is STRICTLY CONDITIONED upon:
+
+a) Obtaining a valid license to use the NVIDIA Dataset from NVIDIA
+b) Complying with the NVIDIA Autonomous Vehicle Dataset License Agreement
+c) Using the NVIDIA Dataset ONLY for permitted purposes under NVIDIA's license
+
+NVIDIA Dataset License Agreement is available at:
+https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles-NuRec
+
+You acknowledge that:
+- This Software is NOT affiliated with, endorsed by, or supported by NVIDIA
+- The Software is an independent implementation based on USDZ file structure analysis
+- NVIDIA has no obligation to support this Software
+
+---
+
+3. PERMITTED USE CASES
+
+You MAY use the Software for:
+
+a) Educational and research purposes
+b) Internal development of autonomous vehicle systems
+c) Academic projects and experimentation
+d) Personal learning and experimentation
+
+You MUST:
+
+a) Comply with all terms of NVIDIA's Dataset License Agreement
+b) Have valid authorization to access the NVIDIA Dataset
+c) Use the Software only for purposes permitted by NVIDIA's license
+
+---
+
+4. PROHIBITED USE CASES
+
+You MUST NOT use the Software for:
+
+a) Commercial purposes (strictly prohibited)
+b) Production environments or commercial deployments
+c) Distribution of the NVIDIA Dataset or any portion thereof
+d) Any use that violates NVIDIA's Dataset License Agreement, including:
+   - Surveillance programs or services
+   - Law enforcement or public authority rule enforcement
+   - Biometric processing or individual identification
+   - Inference of race, ethnicity, gender, age, or health attributes
+   - Identity, emotion recognition, or social scoring technologies
+
+---
+
+5. SOURCE CODE DISTRIBUTION
+
+If you distribute source code copies of the Software, you MUST:
+
+a) Include this complete license file without modification
+b) Clearly notify recipients of the NVIDIA Dataset license requirements
+c) Ensure recipients understand they must obtain their own NVIDIA Dataset license
+d) Distribute the Software under this exact license (no different license terms)
+
+You MAY NOT:
+
+a) Distribute the Software under a different license (e.g., MIT, Apache, GPL)
+b) Grant any rights not explicitly granted in this license
+c) Represent that your distribution is approved or endorsed by NVIDIA
+
+---
+
+6. DISCLAIMER OF WARRANTIES
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+---
+
+7. TERMINATION
+
+This license is effective until terminated. Your rights under this license
+will terminate automatically if you fail to comply with any of its terms.
+Upon termination, you must cease all use of the Software and destroy all copies.
+
+---
+
+8. NO NVIDIA AFFILIATION
+
+This Software is an independent project and is NOT:
+- Affiliated with NVIDIA Corporation
+- Endorsed by NVIDIA Corporation
+- Supported by NVIDIA Corporation
+- Official NVIDIA software or documentation
+
+NVIDIA and the NVIDIA logo are trademarks or registered trademarks of
+NVIDIA Corporation in the United States and other countries.
+
+---
+
+This license constitutes the entire agreement between you and Simple NuRec Viewer
+Contributors regarding the Software.
