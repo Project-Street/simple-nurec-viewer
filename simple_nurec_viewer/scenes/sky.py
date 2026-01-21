@@ -103,7 +103,7 @@ class SkyCubeMap:
 
         # Remove batch dimension and permute to [3, H, W]
         sky_color = sky_color[0].permute(2, 0, 1)  # [3, H, W]
-        return sky_color.clamp(0, 1)
+        return sky_color
 
 
 def generate_ray_directions(H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:

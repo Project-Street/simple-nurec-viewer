@@ -201,8 +201,6 @@ class RigidGaussian(BaseGaussian):
         Args:
             **kwargs: Optional parameters including:
                 - timestamp: Optional timestamp for rigid transform (seconds)
-                - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-                - sh_degree: Spherical harmonics degree (default: 1)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -210,14 +208,12 @@ class RigidGaussian(BaseGaussian):
             - quats: Normalized quaternions [N, 4]
             - scales: Scales (exp activated) [N, 3]
             - opacities: Opacities (sigmoid activated) [N]
-            - colors: RGB colors [N, 3] if viewmat provided, else SH coefficients [N, 20, 3]
+            - colors: SH coefficients [N, K, 3]
         """
         timestamp = kwargs.get("timestamp", None)
-        viewmat = kwargs.get("viewmat", None)
-        sh_degree = kwargs.get("sh_degree", 1)
 
         # Get base Gaussian parameters using the default implementation
-        means, quats, scales, opacities, colors = self._collect_impl(viewmat, sh_degree)
+        means, quats, scales, opacities, colors = self._collect_impl()
 
         # Apply rigid transform if timestamp is provided
         if timestamp is not None:

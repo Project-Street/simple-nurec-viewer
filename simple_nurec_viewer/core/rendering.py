@@ -56,6 +56,7 @@ def render_gaussians(
     width: int,
     height: int,
     device: torch.device,
+    sh_degree: int,
     render_mode: str = "RGB+ED",
     return_alpha: bool = False,
     camera_model: str = "pinhole",
@@ -69,12 +70,13 @@ def render_gaussians(
         quats: Gaussian rotations (normalized quaternions) [N, 4]
         scales: Gaussian scales [N, 3]
         opacities: Gaussian opacities [N]
-        colors: RGB colors [N, 3]
+        colors: SH coefficients [N, K, 3] where K is number of SH bases
         viewmat: View matrix [4, 4]
         K: Camera intrinsic matrix [3, 3]
         width: Image width
         height: Image height
         device: Torch device
+        sh_degree: Spherical harmonics degree for SH-to-RGB conversion
         render_mode: "RGB" or "RGB+ED" (RGB + alpha/depth)
         return_alpha: If True, return (rgb, alpha), otherwise return rgb only
         camera_model: Camera model type ("pinhole" or "ftheta")
@@ -94,12 +96,12 @@ def render_gaussians(
         quats,  # [N, 4]
         scales,  # [N, 3]
         opacities,  # [N]
-        colors,  # [N, 3] - RGB colors
+        colors,  # [N, K, 3] - SH coefficients
         viewmat[None],  # [1, 4, 4]
         K[None],  # [1, 3, 3]
         width,
         height,
-        sh_degree=None,  # No SH conversion, colors are already RGB
+        sh_degree=sh_degree,  # Enable SH conversion in rasterization
         render_mode=render_mode,
         backgrounds=backgrounds,
         radius_clip=3,  # Cull distant Gaussians for performance
@@ -166,7 +168,12 @@ def render_frame(
         K_t = K.float().to(device)
 
     # Collect Gaussians
-    means, quats, scales, opacities, colors = ctx.gaussian_set.hybrid.collect(timestamp=timestamp, viewmat=viewmat_t)
+    means, quats, scales, opacities, colors = ctx.gaussian_set.hybrid.collect(timestamp=timestamp)
+
+    # Determine sh_degree from colors shape
+    # [N, K, 3] -> K bases, find max degree such that (degree+1)^2 <= K
+    K = colors.shape[1]
+    sh_degree = int(torch.sqrt(torch.tensor(K, dtype=torch.float)).item()) - 1
 
     # Render Gaussians with alpha channel for blending
     rgb, alpha = render_gaussians(
@@ -180,6 +187,7 @@ def render_frame(
         width,
         height,
         device,
+        sh_degree=sh_degree,
         render_mode="RGB",
         return_alpha=True,
         camera_model=camera_model,
@@ -196,13 +204,13 @@ def render_frame(
         sky_rgb = ctx.sky_cubemap.render(height, width, ray_d)  # [3, H, W]
 
         # Alpha blend
-        alpha_expanded = alpha.unsqueeze(-1).clamp(0, 1)  # [H, W, 1]
+        alpha_expanded = alpha.unsqueeze(-1)  # [H, W, 1]
         sky_rgb = sky_rgb.permute(1, 2, 0)  # [H, W, 3]
         final_image = rgb * alpha_expanded + sky_rgb * (1 - alpha_expanded)
     else:
         final_image = rgb
 
-    return final_image.cpu().numpy()
+    return final_image.clamp(0, 1).cpu().numpy()
 
 
 __all__ = [

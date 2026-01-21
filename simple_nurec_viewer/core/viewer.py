@@ -71,8 +71,10 @@ class GaussianSet:
                 rotations=state_dict["model.gaussians_nodes.dynamic_rigids.rotations"],
                 scales=state_dict["model.gaussians_nodes.dynamic_rigids.scales"],
                 densities=state_dict["model.gaussians_nodes.dynamic_rigids.densities"],
-                features_albedo=state_dict["model.gaussians_nodes.dynamic_rigids.features_albedo"],
-                features_specular=state_dict["model.gaussians_nodes.dynamic_rigids.features_specular"],
+                features_albedo=state_dict["model.gaussians_nodes.dynamic_rigids.features_albedo"][:, 0, :],
+                features_specular=torch.zeros_like(
+                    state_dict["model.gaussians_nodes.dynamic_rigids.features_specular"]
+                ),
                 cuboid_ids=state_dict["model.gaussians_nodes.dynamic_rigids.gaussian_cuboid_ids"],
                 tracks_data=tracks_data,
                 device=device,

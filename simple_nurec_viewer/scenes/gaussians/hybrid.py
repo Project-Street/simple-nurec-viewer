@@ -61,8 +61,6 @@ class HybridGaussian(BaseGaussian):
         Args:
             **kwargs: Optional parameters including:
                 - timestamp: Optional timestamp for rigid transforms (seconds)
-                - viewmat: Optional view matrix [4, 4] for SH-to-RGB conversion
-                - sh_degree: Spherical harmonics degree (default: 3)
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -70,8 +68,8 @@ class HybridGaussian(BaseGaussian):
             - quats: Concatenated normalized quaternions [total_N, 4]
             - scales: Concatenated scales (exp activated) [total_N, 3]
             - opacities: Concatenated opacities (sigmoid activated) [total_N]
-            - colors: Concatenated RGB colors [total_N, 3] if viewmat provided,
-                     else SH coefficients [total_N, 20, 3]
+            - colors: Concatenated SH coefficients [total_N, K, 3] where K is the maximum
+                     number of SH bases across all Gaussian groups (padded with zeros if needed)
         """
         # Collect parameters from each Gaussian
         all_means = []
@@ -98,7 +96,21 @@ class HybridGaussian(BaseGaussian):
         quats_concat = torch.cat(all_quats, dim=0)
         scales_concat = torch.cat(all_scales, dim=0)
         opacities_concat = torch.cat(all_opacities, dim=0)
-        colors_concat = torch.cat(all_colors, dim=0)
+
+        # Find max K and pad all colors to match (different Gaussian types may have different K)
+        max_k = max(c.shape[1] for c in all_colors)
+        all_colors_padded = []
+        for colors in all_colors:
+            k = colors.shape[1]
+            if k < max_k:
+                # Pad with zeros to max_k
+                padding = torch.zeros(colors.shape[0], max_k - k, 3, device=colors.device, dtype=colors.dtype)
+                colors_padded = torch.cat([colors, padding], dim=1)
+                all_colors_padded.append(colors_padded)
+            else:
+                all_colors_padded.append(colors)
+
+        colors_concat = torch.cat(all_colors_padded, dim=0)
 
         return means_concat, quats_concat, scales_concat, opacities_concat, colors_concat
 
