@@ -27,7 +27,13 @@ class GaussianSet:
     unified access to all Gaussians through a HybridGaussian aggregator.
     """
 
-    def __init__(self, state_dict: dict, device: torch.device, tracks_data: Optional[dict] = None):
+    def __init__(
+        self,
+        state_dict: dict,
+        device: torch.device,
+        tracks_data: Optional[dict] = None,
+        dynamic_rigids_track_mapping: Optional[list] = None,
+    ):
         """
         Initialize a GaussianSet from a state dictionary.
 
@@ -35,6 +41,8 @@ class GaussianSet:
             state_dict: Model state dict containing Gaussian parameters
             device: Torch device
             tracks_data: Optional tracks data from sequence_tracks.json
+            dynamic_rigids_track_mapping: Optional list mapping cuboid_id to track name
+                                          (from model._extra_state['obj_track_ids']['dynamic_rigids'])
         """
         self.device = device
 
@@ -77,6 +85,7 @@ class GaussianSet:
                 ),
                 cuboid_ids=state_dict["model.gaussians_nodes.dynamic_rigids.gaussian_cuboid_ids"],
                 tracks_data=tracks_data,
+                dynamic_rigids_track_mapping=dynamic_rigids_track_mapping,
                 device=device,
             )
             gaussian_list.append(rigids)
@@ -92,7 +101,13 @@ class GaussianSet:
         self.road = road
 
     @classmethod
-    def from_checkpoint(cls, ckpt_path: str, device: torch.device, tracks_data: Optional[dict] = None):
+    def from_checkpoint(
+        cls,
+        ckpt_path: str,
+        device: torch.device,
+        tracks_data: Optional[dict] = None,
+        dynamic_rigids_track_mapping: Optional[list] = None,
+    ):
         """
         Load GaussianSet from a checkpoint file.
 
@@ -100,12 +115,13 @@ class GaussianSet:
             ckpt_path: Path to the checkpoint file
             device: Torch device
             tracks_data: Optional tracks data from sequence_tracks.json
+            dynamic_rigids_track_mapping: Optional list mapping cuboid_id to track name
 
         Returns:
             GaussianSet instance
         """
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-        return cls(ckpt["state_dict"], device, tracks_data)
+        return cls(ckpt["state_dict"], device, tracks_data, dynamic_rigids_track_mapping)
 
     def print_summary(self):
         """Print a summary of the loaded Gaussians."""

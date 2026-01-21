@@ -38,7 +38,8 @@ class RigidGaussian(BaseGaussian):
         features_specular: torch.Tensor,
         cuboid_ids: torch.Tensor,
         tracks_data: Optional[dict],
-        device: torch.device,
+        dynamic_rigids_track_mapping: Optional[list] = None,
+        device: torch.device = torch.device("cuda"),
     ):
         """
         Initialize a RigidGaussian.
@@ -52,6 +53,8 @@ class RigidGaussian(BaseGaussian):
             features_specular: Specular features [N, 45]
             cuboid_ids: Track/box ID for each Gaussian [N]
             tracks_data: Optional tracks data from sequence_tracks.json
+            dynamic_rigids_track_mapping: Optional list mapping cuboid_id to track name
+                                          (from model._extra_state['obj_track_ids']['dynamic_rigids'])
             device: Torch device
         """
         super().__init__(
@@ -65,6 +68,21 @@ class RigidGaussian(BaseGaussian):
         )
         self.cuboid_ids = cuboid_ids.to(device)
         self.tracks_data = tracks_data
+
+        # Build mapping from cuboid_id to track_idx
+        # The correct flow is:
+        #   1. gaussian_cuboid_ids value (e.g., 2) -> index into dynamic_rigids_track_mapping
+        #   2. dynamic_rigids_track_mapping[2] -> track name (e.g., '2@scene:...')
+        #   3. track name -> index in tracks_id array -> actual track_idx
+        self.cuboid_to_track_idx = {}
+        if self.tracks_data is not None and dynamic_rigids_track_mapping is not None:
+            tracks_id_list = self.tracks_data.get("tracks_data", {}).get("tracks_id", [])
+            # Build map: track_name (e.g., '2@...') -> track_idx (index in tracks_id array)
+            track_name_to_idx = {name: idx for idx, name in enumerate(tracks_id_list)}
+            # Build map: cuboid_id (which is index into dynamic_rigids_track_mapping) -> track_idx
+            for idx, track_name in enumerate(dynamic_rigids_track_mapping):
+                if track_name in track_name_to_idx:
+                    self.cuboid_to_track_idx[idx] = track_name_to_idx[track_name]
 
     def _load_track_from_usd(self, track_idx: int, timestamp: float) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -168,8 +186,9 @@ class RigidGaussian(BaseGaussian):
         cuboid_to_transform = {}
 
         for cuboid_id in torch.unique(self.cuboid_ids):
-            # cuboid_id is the track index (0-based)
-            track_idx = int(cuboid_id)
+            # Map cuboid_id to track_idx using the correct mapping
+            # cuboid_id -> track_name -> track_idx in tracks_id array
+            track_idx = self.cuboid_to_track_idx.get(int(cuboid_id), int(cuboid_id))
 
             # Load track transform from JSON with interpolation
             q, t = self._load_track_from_usd(track_idx, timestamp)

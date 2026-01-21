@@ -102,7 +102,15 @@ def load_nurec_data(
             raise ValueError("checkpoint.ckpt not found in USDZ file")
 
         print(f"Loading checkpoint from {ckpt_path}...")
-        gaussian_set = GaussianSet.from_checkpoint(str(ckpt_path), device, tracks_data=tracks_data)
+
+        # Load obj_track_ids mapping from checkpoint
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        obj_track_ids = ckpt["state_dict"].get("model._extra_state", {}).get("obj_track_ids", {})
+        dynamic_rigids_track_mapping = obj_track_ids.get("dynamic_rigids", [])
+
+        gaussian_set = GaussianSet.from_checkpoint(
+            str(ckpt_path), device, tracks_data=tracks_data, dynamic_rigids_track_mapping=dynamic_rigids_track_mapping
+        )
         gaussian_set.print_summary()
 
         # Load camera trajectories from datasource_summary.json
@@ -124,9 +132,8 @@ def load_nurec_data(
                 world_to_nre = np.array(rig_traj_data["world_to_nre"]["matrix"])
                 print("Loaded world_to_nre transformation matrix")
 
-        # Load sky cubemap texture from checkpoint
+        # Load sky cubemap texture from checkpoint (already loaded above)
         sky_cubemap = None
-        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         if "model.background.textures" in ckpt["state_dict"]:
             tex = ckpt["state_dict"]["model.background.textures"]
             # Remove batch dim: [1, 6, H, W, 3] -> [6, H, W, 3]
