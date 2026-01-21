@@ -67,7 +67,6 @@ class RigidGaussian(BaseGaussian):
             device=device,
         )
         self.cuboid_ids = cuboid_ids.to(device)
-        self.tracks_data = tracks_data
 
         # Build mapping from cuboid_id to track_idx
         # The correct flow is:
@@ -75,14 +74,39 @@ class RigidGaussian(BaseGaussian):
         #   2. dynamic_rigids_track_mapping[2] -> track name (e.g., '2@scene:...')
         #   3. track name -> index in tracks_id array -> actual track_idx
         self.cuboid_to_track_idx = {}
-        if self.tracks_data is not None and dynamic_rigids_track_mapping is not None:
-            tracks_id_list = self.tracks_data.get("tracks_data", {}).get("tracks_id", [])
+        if tracks_data is not None and dynamic_rigids_track_mapping is not None:
+            tracks_id_list = tracks_data.get("tracks_data", {}).get("tracks_id", [])
             # Build map: track_name (e.g., '2@...') -> track_idx (index in tracks_id array)
             track_name_to_idx = {name: idx for idx, name in enumerate(tracks_id_list)}
             # Build map: cuboid_id (which is index into dynamic_rigids_track_mapping) -> track_idx
             for idx, track_name in enumerate(dynamic_rigids_track_mapping):
                 if track_name in track_name_to_idx:
                     self.cuboid_to_track_idx[idx] = track_name_to_idx[track_name]
+
+        # Preprocess and normalize track poses: convert quaternion from xyzw to wxyz format
+        # This avoids repeated conversions during runtime
+        if tracks_data is not None:
+            tracks_dict = tracks_data.get("tracks_data", {})
+            tracks_poses = tracks_dict.get("tracks_poses", [])
+
+            # Convert all track poses from xyzw to wxyz quaternion format
+            # Original format: [x, y, z, qx, qy, qz, qw]
+            # Target format: [x, y, z, qw, qx, qy, qz]
+            for track_idx in range(len(tracks_poses)):
+                poses = np.array(tracks_poses[track_idx])  # [N_frames, 7]
+                if len(poses) > 0:
+                    # Swap quaternion components: [qx, qy, qz, qw] -> [qw, qx, qy, qz]
+                    # poses[:, 3:7] is [qx, qy, qz, qw], need to reorder to [qw, qx, qy, qz]
+                    q_xyzw = poses[:, 3:7]  # [N, 4] in xyzw format
+                    q_wxyz = q_xyzw[:, [3, 0, 1, 2]]  # [N, 4] in wxyz format
+                    poses[:, 3:7] = q_wxyz
+                    tracks_poses[track_idx] = poses.tolist()
+
+            # Update tracks_data with converted poses
+            tracks_dict["tracks_poses"] = tracks_poses
+            tracks_data["tracks_data"] = tracks_dict
+
+        self.tracks_data = tracks_data
 
     def _load_track_from_usd(self, track_idx: int, timestamp: float) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -131,6 +155,7 @@ class RigidGaussian(BaseGaussian):
             )
 
         # Check if timestamp is within range
+        # Note: poses are now in wxyz format after preprocessing in __init__
         if timestamp <= timestamps_s[0]:
             pose = poses[0]
             t = torch.tensor(pose[:3], device=self.device, dtype=torch.float32)
@@ -154,7 +179,7 @@ class RigidGaussian(BaseGaussian):
         pose1 = poses[idx]  # [7]
 
         # Extract translations and quaternions
-        # pose format: [x, y, z, qw, qx, qy, qz]
+        # pose format: [x, y, z, qw, qx, qy, qz] (already converted in __init__)
         t0_np = pose0[:3]
         t1_np = pose1[:3]
         q0_np = pose0[3:7]

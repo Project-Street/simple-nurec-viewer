@@ -2,6 +2,14 @@
 
 A lightweight 3D Gaussian Splatting viewer for NuRec USDZ files with interactive web-based visualization and camera frame export capabilities.
 
+## Roadmap
+
+- [x] gRPC server and protocol for remote rendering
+- [x] Specular feature for Gaussian rendering
+- [ ] Implement temporal rendering (for albedo features)
+- [ ] Speedup trajectory interpolation
+- [ ] Deformable Gaussian support
+
 ## Warning & Disclaimer ⚠️
 
 - **NOT affiliated with NVIDIA** - Independent implementation
@@ -285,10 +293,3 @@ Additional guidelines:
 - Type hints for all public functions
 - English docstrings using NumPy style
 - Ruff for linting and formatting
-
-## Roadmap
-
-- [x] gRPC server and protocol for remote rendering
-- [ ] Specular feature for Gaussian rendering
-  - [ ] Requires migration from gsplat to original 3dgrut renderer
-- [ ] Deformable Gaussian support
