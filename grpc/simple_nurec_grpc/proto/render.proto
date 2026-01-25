@@ -66,13 +66,23 @@ message RenderRequest {
 
 message TrafficPoseRequest {
     // Traffic type id
-    string traffic_type_id = 1;
+    string object_id = 1;
 
     // 4x4 row-major matrix
     repeated float pose_4x4 = 2;
 }
 
 message TrafficPoseResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message SwitchUsdzRequest {
+    // USDZ file path to load.
+    string usdz_path = 1;
+}
+
+message SwitchUsdzResponse {
     bool success = 1;
     string error_message = 2;
 }
@@ -95,4 +105,7 @@ service RenderService {
 
     // Update traffic pose override for rendering
     rpc SetTrafficPose(TrafficPoseRequest) returns (TrafficPoseResponse);
+
+    // Switch the loaded USDZ scene for rendering
+    rpc SwitchUsdz(SwitchUsdzRequest) returns (SwitchUsdzResponse);
 }

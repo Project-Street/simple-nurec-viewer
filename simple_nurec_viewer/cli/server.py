@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import threading
 
 import numpy as np
 import torch
@@ -33,8 +34,8 @@ from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 class ServerConfig:
     """Configuration for the gRPC rendering server."""
 
-    usdz_path: Path
-    """Path to the USDZ file to load."""
+    usdz_path: Optional[Path] = None
+    """Path to the USDZ file to load (optional at startup)."""
 
     host: str = "0.0.0.0"
     """Host address to bind the server."""
@@ -58,23 +59,26 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         sky_cubemap,
         device: torch.device,
         verbose: bool = False,
+        usdz_path: Optional[Path] = None,
     ):
         self.gaussian_set = gaussian_set
         self.sky_cubemap = sky_cubemap
         # self.world_to_nre = world_to_nre  # Unused, converted by client
         self.device = device
         self.verbose = verbose
+        self.usdz_path = usdz_path
         self.console = Console()
         self.render_count = 0
         self.last_traffic_pose: Optional[dict] = None
+        self._scene_lock = threading.RLock()
 
     def SetTrafficPose(self, request: render_pb2.TrafficPoseRequest, context) -> render_pb2.TrafficPoseResponse:
         """Handle traffic pose update requests."""
         response = render_pb2.TrafficPoseResponse()
         try:
-            traffic_type_id = request.traffic_type_id
-            if not traffic_type_id:
-                raise ValueError("traffic_type_id must be a non-empty string")
+            object_id = request.object_id
+            if not object_id:
+                raise ValueError("object_id must be a non-empty string")
 
             if len(request.pose_4x4) != 16:
                 raise ValueError(f"pose_4x4 must have 16 elements, got {len(request.pose_4x4)}")
@@ -83,10 +87,42 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
             if not np.isfinite(pose).all():
                 raise ValueError("pose_4x4 contains non-finite values")
 
-            self.last_traffic_pose = {
-                "traffic_type_id": traffic_type_id,
-                "pose_4x4": pose,
-            }
+            with self._scene_lock:
+                self.last_traffic_pose = {
+                    "object_id": object_id,
+                    "pose_4x4": pose,
+                }
+            response.success = True
+        except Exception as e:
+            response.success = False
+            response.error_message = f"{type(e).__name__}: {str(e)}"
+
+        return response
+
+    def SwitchUsdz(self, request: render_pb2.SwitchUsdzRequest, context) -> render_pb2.SwitchUsdzResponse:
+        """Handle USDZ scene switch requests."""
+        response = render_pb2.SwitchUsdzResponse()
+        try:
+            usdz_path = request.usdz_path
+            if not usdz_path:
+                raise ValueError("usdz_path must be a non-empty string")
+
+            path = Path(usdz_path).expanduser()
+            if not path.is_absolute():
+                path = (Path.cwd() / path).resolve()
+
+            if not path.exists():
+                raise FileNotFoundError(f"USDZ file not found: {path}")
+
+            data = load_nurec_data(path, self.device)
+
+            with self._scene_lock:
+                self.gaussian_set = data.gaussian_set
+                self.sky_cubemap = data.sky_cubemap
+                self.last_traffic_pose = None
+                self.render_count = 0
+                self.usdz_path = path
+
             response.success = True
         except Exception as e:
             response.success = False
@@ -222,11 +258,6 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
 
 def serve(config: ServerConfig):
     """Start the gRPC server."""
-    # Validate USDZ file exists
-    if not config.usdz_path.exists():
-        print(f"Error: USDZ file not found: {config.usdz_path}")
-        return
-
     # Determine device
     if config.device.startswith("cuda"):
         if torch.cuda.is_available():
@@ -237,14 +268,27 @@ def serve(config: ServerConfig):
     else:
         device = torch.device(config.device)
 
-    # Load NuRec data
-    print(f"Loading NuRec data from {config.usdz_path}...")
-    data = load_nurec_data(config.usdz_path, device)
-    gaussian_set = data.gaussian_set
-    sky_cubemap = data.sky_cubemap
+    gaussian_set = None
+    sky_cubemap = None
+    if config.usdz_path is not None:
+        if not config.usdz_path.exists():
+            print(f"Error: USDZ file not found: {config.usdz_path}")
+            return
+        print(f"Loading NuRec data from {config.usdz_path}...")
+        data = load_nurec_data(config.usdz_path, device)
+        gaussian_set = data.gaussian_set
+        sky_cubemap = data.sky_cubemap
+    else:
+        print("No USDZ specified at startup. Waiting for SwitchUsdz request...")
 
     # Create servicer
-    servicer = RenderServicer(gaussian_set, sky_cubemap, device, verbose=config.verbose)
+    servicer = RenderServicer(
+        gaussian_set,
+        sky_cubemap,
+        device,
+        verbose=config.verbose,
+        usdz_path=config.usdz_path,
+    )
 
     # Start server with increased message size (256 MB for high-res images)
     max_message_length = 256 * 1024 * 1024  # 256 MB
@@ -268,7 +312,7 @@ def serve(config: ServerConfig):
 
 
 def server(
-    usdz_path: Path,
+    usdz_path: Optional[Path] = None,
     host: str = "0.0.0.0",
     port: int = 50051,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
