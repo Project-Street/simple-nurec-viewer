@@ -132,6 +132,7 @@ def render_frame(
     timestamp: Optional[float] = None,
     camera_model: str = "pinhole",
     ftheta_coeffs=None,
+    traffic_pose_override: Optional[dict] = None,
 ) -> np.ndarray:
     """
     Render a single frame from the given camera viewpoint.
@@ -147,6 +148,7 @@ def render_frame(
         timestamp: Optional timestamp for rigid body animation
         camera_model: Camera model type ("pinhole" or "ftheta")
         ftheta_coeffs: FThetaCameraDistortionParameters for ftheta cameras
+        traffic_pose_override: Optional traffic pose override payload
 
     Returns:
         Rendered RGB image as numpy array [H, W, 3]
@@ -168,12 +170,16 @@ def render_frame(
         K_t = K.float().to(device)
 
     # Collect Gaussians
-    means, quats, scales, opacities, colors = ctx.gaussian_set.hybrid.collect(timestamp=timestamp)
-
+    means, quats, scales, opacities, colors = ctx.gaussian_set.hybrid.collect(
+        timestamp=timestamp,
+        viewmat=viewmat_t,
+        traffic_pose_override=traffic_pose_override,
+    )
     # Determine sh_degree from colors shape
     # [N, K, 3] -> K bases, find max degree such that (degree+1)^2 <= K
     K = colors.shape[1]
     sh_degree = int(torch.sqrt(torch.tensor(K, dtype=torch.float)).item()) - 1
+
 
     # Render Gaussians with alpha channel for blending
     rgb, alpha = render_gaussians(

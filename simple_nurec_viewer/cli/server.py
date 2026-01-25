@@ -9,6 +9,7 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -65,6 +66,33 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         self.verbose = verbose
         self.console = Console()
         self.render_count = 0
+        self.last_traffic_pose: Optional[dict] = None
+
+    def SetTrafficPose(self, request: render_pb2.TrafficPoseRequest, context) -> render_pb2.TrafficPoseResponse:
+        """Handle traffic pose update requests."""
+        response = render_pb2.TrafficPoseResponse()
+        try:
+            traffic_type_id = request.traffic_type_id
+            if not traffic_type_id:
+                raise ValueError("traffic_type_id must be a non-empty string")
+
+            if len(request.pose_4x4) != 16:
+                raise ValueError(f"pose_4x4 must have 16 elements, got {len(request.pose_4x4)}")
+
+            pose = np.array(request.pose_4x4, dtype=np.float32).reshape(4, 4)
+            if not np.isfinite(pose).all():
+                raise ValueError("pose_4x4 contains non-finite values")
+
+            self.last_traffic_pose = {
+                "traffic_type_id": traffic_type_id,
+                "pose_4x4": pose,
+            }
+            response.success = True
+        except Exception as e:
+            response.success = False
+            response.error_message = f"{type(e).__name__}: {str(e)}"
+
+        return response
 
     def Render(self, request: render_pb2.RenderRequest, context) -> render_pb2.RenderResponse:
         """Handle render requests."""
@@ -163,6 +191,7 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
                     timestamp=timestamp,
                     camera_model=camera_model,
                     ftheta_coeffs=ftheta_coeffs,
+                    traffic_pose_override=self.last_traffic_pose,
                 )
 
             # Convert to uint8 bytes
