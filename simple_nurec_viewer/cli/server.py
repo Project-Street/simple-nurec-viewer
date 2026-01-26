@@ -2,13 +2,15 @@
 Server subcommand for Simple NuRec Viewer.
 
 This module provides the gRPC server subcommand for remote rendering
-of NuRec USDZ files.
+of NuRec checkpoint models.
 """
 
 import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
+import threading
 
 import numpy as np
 import torch
@@ -24,7 +26,7 @@ if not importlib.util.find_spec("simple_nurec_grpc"):
 from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
 from simple_nurec_grpc import render_pb2, render_pb2_grpc
 
-from simple_nurec_viewer.core.loader import load_nurec_data
+from simple_nurec_viewer.core.loader import load_nurec_checkpoint
 from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 
 
@@ -32,8 +34,8 @@ from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 class ServerConfig:
     """Configuration for the gRPC rendering server."""
 
-    usdz_path: Path
-    """Path to the USDZ file to load."""
+    ckpt_path: Optional[Path] = None
+    """Path to the checkpoint file to load (optional at startup)."""
 
     host: str = "0.0.0.0"
     """Host address to bind the server."""
@@ -57,14 +59,76 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         sky_cubemap,
         device: torch.device,
         verbose: bool = False,
+        ckpt_path: Optional[Path] = None,
     ):
         self.gaussian_set = gaussian_set
         self.sky_cubemap = sky_cubemap
         # self.world_to_nre = world_to_nre  # Unused, converted by client
         self.device = device
         self.verbose = verbose
+        self.ckpt_path = ckpt_path
         self.console = Console()
         self.render_count = 0
+        self.last_traffic_pose: Optional[dict] = None
+        self._scene_lock = threading.RLock()
+
+    def SetTrafficPose(self, request: render_pb2.TrafficPoseRequest, context) -> render_pb2.TrafficPoseResponse:
+        """Handle traffic pose update requests."""
+        response = render_pb2.TrafficPoseResponse()
+        try:
+            object_id = request.object_id
+            if not object_id:
+                raise ValueError("object_id must be a non-empty string")
+
+            if len(request.pose_4x4) != 16:
+                raise ValueError(f"pose_4x4 must have 16 elements, got {len(request.pose_4x4)}")
+
+            pose = np.array(request.pose_4x4, dtype=np.float32).reshape(4, 4)
+            if not np.isfinite(pose).all():
+                raise ValueError("pose_4x4 contains non-finite values")
+
+            with self._scene_lock:
+                self.last_traffic_pose = {
+                    "object_id": object_id,
+                    "pose_4x4": pose,
+                }
+            response.success = True
+        except Exception as e:
+            response.success = False
+            response.error_message = f"{type(e).__name__}: {str(e)}"
+
+        return response
+
+    def LoadModel(self, request: render_pb2.LoadModelRequest, context) -> render_pb2.LoadModelResponse:
+        """Handle checkpoint model load requests."""
+        response = render_pb2.LoadModelResponse()
+        try:
+            ckpt_path = request.ckpt_path
+            if not ckpt_path:
+                raise ValueError("ckpt_path must be a non-empty string")
+
+            path = Path(ckpt_path).expanduser()
+            if not path.is_absolute():
+                path = (Path.cwd() / path).resolve()
+
+            if not path.exists():
+                raise FileNotFoundError(f"Checkpoint file not found: {path}")
+
+            data = load_nurec_checkpoint(path, self.device)
+
+            with self._scene_lock:
+                self.gaussian_set = data.gaussian_set
+                self.sky_cubemap = data.sky_cubemap
+                self.last_traffic_pose = None
+                self.render_count = 0
+                self.ckpt_path = path
+
+            response.success = True
+        except Exception as e:
+            response.success = False
+            response.error_message = f"{type(e).__name__}: {str(e)}"
+
+        return response
 
     def Render(self, request: render_pb2.RenderRequest, context) -> render_pb2.RenderResponse:
         """Handle render requests."""
@@ -163,6 +227,7 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
                     timestamp=timestamp,
                     camera_model=camera_model,
                     ftheta_coeffs=ftheta_coeffs,
+                    traffic_pose_override=self.last_traffic_pose,
                 )
 
             # Convert to uint8 bytes
@@ -193,11 +258,6 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
 
 def serve(config: ServerConfig):
     """Start the gRPC server."""
-    # Validate USDZ file exists
-    if not config.usdz_path.exists():
-        print(f"Error: USDZ file not found: {config.usdz_path}")
-        return
-
     # Determine device
     if config.device.startswith("cuda"):
         if torch.cuda.is_available():
@@ -208,14 +268,27 @@ def serve(config: ServerConfig):
     else:
         device = torch.device(config.device)
 
-    # Load NuRec data
-    print(f"Loading NuRec data from {config.usdz_path}...")
-    data = load_nurec_data(config.usdz_path, device)
-    gaussian_set = data.gaussian_set
-    sky_cubemap = data.sky_cubemap
+    gaussian_set = None
+    sky_cubemap = None
+    if config.ckpt_path is not None:
+        if not config.ckpt_path.exists():
+            print(f"Error: Checkpoint file not found: {config.ckpt_path}")
+            return
+        print(f"Loading checkpoint from {config.ckpt_path}...")
+        data = load_nurec_checkpoint(config.ckpt_path, device)
+        gaussian_set = data.gaussian_set
+        sky_cubemap = data.sky_cubemap
+    else:
+        print("No checkpoint specified at startup. Waiting for LoadModel request...")
 
     # Create servicer
-    servicer = RenderServicer(gaussian_set, sky_cubemap, device, verbose=config.verbose)
+    servicer = RenderServicer(
+        gaussian_set,
+        sky_cubemap,
+        device,
+        verbose=config.verbose,
+        ckpt_path=config.ckpt_path,
+    )
 
     # Start server with increased message size (256 MB for high-res images)
     max_message_length = 256 * 1024 * 1024  # 256 MB
@@ -239,7 +312,7 @@ def serve(config: ServerConfig):
 
 
 def server(
-    usdz_path: Path,
+    ckpt_path: Optional[Path] = None,
     host: str = "0.0.0.0",
     port: int = 50051,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -248,13 +321,13 @@ def server(
     """Start gRPC server for remote rendering.
 
     Args:
-        usdz_path: Path to the USDZ file
+        ckpt_path: Path to the checkpoint file
         host: Host address to bind (default: 0.0.0.0)
         port: Port to listen on (default: 50051)
         device: Device for rendering (default: cuda if available)
         verbose: Enable verbose logging (default: False)
     """
-    config = ServerConfig(usdz_path=usdz_path, host=host, port=port, device=device, verbose=verbose)
+    config = ServerConfig(ckpt_path=ckpt_path, host=host, port=port, device=device, verbose=verbose)
     serve(config)
 
 

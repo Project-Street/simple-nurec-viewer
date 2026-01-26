@@ -5,12 +5,12 @@ This module provides the RigidGaussian class that extends BaseGaussian
 to support time-varying rigid body transforms from trajectory data.
 """
 
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 
-from ...utils.rigid import build_rotation, quaternion_multiply, slerp
+from ...utils.rigid import build_rotation, matrix_to_quaternion, quaternion_multiply, slerp
 from .base import BaseGaussian
 
 
@@ -197,12 +197,62 @@ class RigidGaussian(BaseGaussian):
 
         return q_interp, t
 
-    def _get_base_transform(self, timestamp: float) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _resolve_override_track_indices(self, object_id: str) -> List[int]:
+        """Resolve object_id to track indices (cuboid ids)."""
+        if not object_id:
+            return []
+
+        resolved = set()
+
+        if self.tracks_data is not None:
+            tracks_dict = self.tracks_data.get("tracks_data", {})
+            tracks_id = tracks_dict.get("tracks_id", [])
+
+            for idx, track_id in enumerate(tracks_id):
+                if str(track_id) == object_id:
+                    resolved.add(idx)
+
+        if not resolved:
+            try:
+                resolved.add(int(object_id))
+            except (TypeError, ValueError):
+                pass
+
+        return sorted(resolved)
+
+    def _build_override_map(self, traffic_pose_override: Optional[dict]) -> Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]]:
+        """Build an override map from traffic pose payload."""
+        if not traffic_pose_override:
+            return None
+
+        object_id = traffic_pose_override.get("object_id")
+        pose_4x4 = traffic_pose_override.get("pose_4x4")
+        if not object_id or pose_4x4 is None:
+            return None
+
+        pose_tensor = torch.as_tensor(pose_4x4, device=self.device, dtype=torch.float32)
+        if pose_tensor.shape != (4, 4):
+            return None
+
+        rotation = pose_tensor[:3, :3]
+        translation = pose_tensor[:3, 3]
+        quat = matrix_to_quaternion(rotation)
+
+        track_indices = self._resolve_override_track_indices(object_id)
+        if not track_indices:
+            return None
+
+        return {track_idx: (quat, translation) for track_idx in track_indices}
+
+    def _get_base_transform(
+        self, timestamp: float, override_map: Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Get base rigid transform for a given timestamp.
 
         Args:
             timestamp: Target timestamp in seconds
+            override_map: Optional per-track override map
 
         Returns:
             Tuple of (quaternions [N, 4], translations [N, 3]) for each Gaussian
@@ -216,7 +266,10 @@ class RigidGaussian(BaseGaussian):
             track_idx = self.cuboid_to_track_idx.get(int(cuboid_id), int(cuboid_id))
 
             # Load track transform from JSON with interpolation
-            q, t = self._load_track_from_usd(track_idx, timestamp)
+            if override_map is not None and track_idx in override_map:
+                q, t = override_map[track_idx]
+            else:
+                q, t = self._load_track_from_usd(track_idx, timestamp)
 
             cuboid_to_transform[int(cuboid_id)] = (q, t)
 
@@ -245,6 +298,7 @@ class RigidGaussian(BaseGaussian):
         Args:
             **kwargs: Optional parameters including:
                 - timestamp: Optional timestamp for rigid transform (seconds)
+                - traffic_pose_override: Optional traffic pose override payload
 
         Returns:
             Tuple of (means, quats, scales, opacities, colors)
@@ -259,10 +313,14 @@ class RigidGaussian(BaseGaussian):
         # Get base Gaussian parameters using the default implementation
         means, quats, scales, opacities, colors = self._collect_impl()
 
-        # Apply rigid transform if timestamp is provided
-        if timestamp is not None:
+        traffic_pose_override = kwargs.get("traffic_pose_override", None)
+        override_map = self._build_override_map(traffic_pose_override)
+
+        # Apply rigid transform if timestamp or override is provided
+        if timestamp is not None or override_map is not None:
             # Get base transform for this timestamp
-            track_q, track_t = self._get_base_transform(timestamp)
+            effective_timestamp = 0.0 if timestamp is None else timestamp
+            track_q, track_t = self._get_base_transform(effective_timestamp, override_map=override_map)
 
             # Build rotation matrices
             track_R = build_rotation(track_q)  # [N, 3, 3]

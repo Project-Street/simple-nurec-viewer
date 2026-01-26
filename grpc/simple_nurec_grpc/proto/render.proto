@@ -64,6 +64,29 @@ message RenderRequest {
     CameraParams camera = 1;
 }
 
+message TrafficPoseRequest {
+    // Object id
+    string object_id = 1;
+
+    // 4x4 row-major matrix
+    repeated float pose_4x4 = 2;
+}
+
+message TrafficPoseResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message LoadModelRequest {
+    // Checkpoint file path to load.
+    string ckpt_path = 1;
+}
+
+message LoadModelResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
 // Render response message
 message RenderResponse {
     // RGB output
@@ -79,4 +102,10 @@ message RenderResponse {
 service RenderService {
     // Render a single camera view
     rpc Render(RenderRequest) returns (RenderResponse);
+
+    // Update traffic pose override for rendering
+    rpc SetTrafficPose(TrafficPoseRequest) returns (TrafficPoseResponse);
+
+    // Load the checkpoint model for rendering
+    rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
 }

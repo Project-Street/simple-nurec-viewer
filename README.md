@@ -141,20 +141,20 @@ simple-nurec export path/to/file.usdz --debug
 
 ### Server Command
 
-Start a gRPC server for remote rendering of NuRec USDZ files.
+Start a gRPC server for remote rendering of NuRec checkpoint models.
 
 ```bash
 # Start server on default port (50051)
-simple-nurec server path/to/file.usdz
+simple-nurec server path/to/checkpoint.ckpt
 
 # Specify custom host and port
-simple-nurec server --host localhost --port 9000 path/to/file.usdz
+simple-nurec server --host localhost --port 9000 path/to/checkpoint.ckpt
 
 # Use CPU rendering
-simple-nurec server --device cpu path/to/file.usdz
+simple-nurec server --device cpu path/to/checkpoint.ckpt
 
 # Enable verbose logging
-simple-nurec server --verbose path/to/file.usdz
+simple-nurec server --verbose path/to/checkpoint.ckpt
 ```
 
 **Server Options:**
@@ -165,9 +165,18 @@ simple-nurec server --verbose path/to/file.usdz
 
 **gRPC API:**
 
-The server implements the `nurec.render.RenderService` service with a `Render` RPC method. The protocol is defined in [grpc/simple_nurec_grpc/proto/render.proto](grpc/simple_nurec_grpc/proto/render.proto).
+The server implements the `nurec.render.RenderService` defined in [grpc/simple_nurec_grpc/proto/render.proto](grpc/simple_nurec_grpc/proto/render.proto). If the server starts without a model loaded, call `LoadModel` before the first `Render`.
 
-**Request Message:**
+**Service Definition:**
+```protobuf
+service RenderService {
+  rpc Render(RenderRequest) returns (RenderResponse);
+  rpc SetTrafficPose(TrafficPoseRequest) returns (TrafficPoseResponse);
+  rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
+}
+```
+
+**Render RPC (Request):**
 ```protobuf
 message RenderRequest {
   Camera camera = 1;
@@ -198,7 +207,7 @@ message Camera {
 }
 ```
 
-**Response Message:**
+**Render RPC (Response):**
 ```protobuf
 message RenderResponse {
   bool success = 1;
@@ -211,6 +220,33 @@ message RGBImage {
   int32 width = 1;
   int32 height = 2;
   bytes rgb_data = 3;  // RGB uint8 data, row-major
+}
+```
+
+**Traffic Pose Override RPC:**
+```protobuf
+message TrafficPoseRequest {
+  // Object id (string)
+  string object_id = 1;
+  // 4x4 row-major matrix
+  repeated float pose_4x4 = 2;
+}
+
+message TrafficPoseResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+```
+
+**Load Model RPC:**
+```protobuf
+message LoadModelRequest {
+  string ckpt_path = 1;
+}
+
+message LoadModelResponse {
+  bool success = 1;
+  string error_message = 2;
 }
 ```
 

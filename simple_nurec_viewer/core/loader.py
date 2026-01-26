@@ -1,8 +1,8 @@
 """
-Shared data loading module for NuRec USDZ files.
+Shared data loading module for NuRec USDZ files and checkpoints.
 
-This module provides the single source of truth for loading NuRec USDZ files,
-used by both viewer and export modules.
+This module provides the single source of truth for loading NuRec USDZ files
+and checkpoint models, used by viewer, export, and server modules.
 """
 
 import json
@@ -153,7 +153,65 @@ def load_nurec_data(
         )
 
 
+def load_nurec_checkpoint(
+    ckpt_path: str | Path,
+    device: torch.device,
+    tracks_data: Optional[dict] = None,
+) -> NuRecData:
+    """
+    Load NuRec data from a checkpoint file.
+
+    Args:
+        ckpt_path: Path to the checkpoint file
+        device: Torch device to load tensors to
+        tracks_data: Optional tracks data for rigid body animation
+
+    Returns:
+        NuRecData container with loaded data
+
+    Raises:
+        FileNotFoundError: If checkpoint file doesn't exist
+        ValueError: If checkpoint content is missing expected keys
+    """
+    ckpt_path = Path(ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
+
+    print(f"Loading checkpoint from {ckpt_path}...")
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+
+    obj_track_ids = ckpt["state_dict"].get("model._extra_state", {}).get("obj_track_ids", {})
+    dynamic_rigids_track_mapping = obj_track_ids.get("dynamic_rigids", [])
+
+    gaussian_set = GaussianSet.from_checkpoint(
+        str(ckpt_path),
+        device,
+        tracks_data=tracks_data,
+        dynamic_rigids_track_mapping=dynamic_rigids_track_mapping,
+    )
+    gaussian_set.print_summary()
+
+    sky_cubemap = None
+    if "model.background.textures" in ckpt["state_dict"]:
+        tex = ckpt["state_dict"]["model.background.textures"]
+        tex = tex.squeeze(0).to(device)
+        print(f"Loaded sky cubemap: shape={tex.shape}")
+        sky_cubemap = SkyCubeMap(tex)
+    else:
+        print("No sky cubemap found in checkpoint")
+    del ckpt  # Free memory
+
+    return NuRecData(
+        gaussian_set=gaussian_set,
+        sky_cubemap=sky_cubemap,
+        tracks_data=tracks_data,
+        camera_trajectories=None,
+        world_to_nre=None,
+    )
+
+
 __all__ = [
     "NuRecData",
     "load_nurec_data",
+    "load_nurec_checkpoint",
 ]
