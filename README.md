@@ -141,20 +141,20 @@ simple-nurec export path/to/file.usdz --debug
 
 ### Server Command
 
-Start a gRPC server for remote rendering of NuRec USDZ files.
+Start a gRPC server for remote rendering of NuRec checkpoint models.
 
 ```bash
 # Start server on default port (50051)
-simple-nurec server path/to/file.usdz
+simple-nurec server path/to/checkpoint.ckpt
 
 # Specify custom host and port
-simple-nurec server --host localhost --port 9000 path/to/file.usdz
+simple-nurec server --host localhost --port 9000 path/to/checkpoint.ckpt
 
 # Use CPU rendering
-simple-nurec server --device cpu path/to/file.usdz
+simple-nurec server --device cpu path/to/checkpoint.ckpt
 
 # Enable verbose logging
-simple-nurec server --verbose path/to/file.usdz
+simple-nurec server --verbose path/to/checkpoint.ckpt
 ```
 
 **Server Options:**
@@ -165,14 +165,14 @@ simple-nurec server --verbose path/to/file.usdz
 
 **gRPC API:**
 
-The server implements the `nurec.render.RenderService` defined in [grpc/simple_nurec_grpc/proto/render.proto](grpc/simple_nurec_grpc/proto/render.proto). If the server starts without a USDZ loaded, call `SwitchUsdz` before the first `Render`.
+The server implements the `nurec.render.RenderService` defined in [grpc/simple_nurec_grpc/proto/render.proto](grpc/simple_nurec_grpc/proto/render.proto). If the server starts without a model loaded, call `LoadModel` before the first `Render`.
 
 **Service Definition:**
 ```protobuf
 service RenderService {
   rpc Render(RenderRequest) returns (RenderResponse);
   rpc SetTrafficPose(TrafficPoseRequest) returns (TrafficPoseResponse);
-  rpc SwitchUsdz(SwitchUsdzRequest) returns (SwitchUsdzResponse);
+  rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
 }
 ```
 
@@ -238,13 +238,13 @@ message TrafficPoseResponse {
 }
 ```
 
-**USDZ Switch RPC:**
+**Load Model RPC:**
 ```protobuf
-message SwitchUsdzRequest {
-  string usdz_path = 1;
+message LoadModelRequest {
+  string ckpt_path = 1;
 }
 
-message SwitchUsdzResponse {
+message LoadModelResponse {
   bool success = 1;
   string error_message = 2;
 }

@@ -2,7 +2,7 @@
 Server subcommand for Simple NuRec Viewer.
 
 This module provides the gRPC server subcommand for remote rendering
-of NuRec USDZ files.
+of NuRec checkpoint models.
 """
 
 import importlib.util
@@ -26,7 +26,7 @@ if not importlib.util.find_spec("simple_nurec_grpc"):
 from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
 from simple_nurec_grpc import render_pb2, render_pb2_grpc
 
-from simple_nurec_viewer.core.loader import load_nurec_data
+from simple_nurec_viewer.core.loader import load_nurec_checkpoint
 from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 
 
@@ -34,8 +34,8 @@ from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 class ServerConfig:
     """Configuration for the gRPC rendering server."""
 
-    usdz_path: Optional[Path] = None
-    """Path to the USDZ file to load (optional at startup)."""
+    ckpt_path: Optional[Path] = None
+    """Path to the checkpoint file to load (optional at startup)."""
 
     host: str = "0.0.0.0"
     """Host address to bind the server."""
@@ -59,14 +59,14 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         sky_cubemap,
         device: torch.device,
         verbose: bool = False,
-        usdz_path: Optional[Path] = None,
+        ckpt_path: Optional[Path] = None,
     ):
         self.gaussian_set = gaussian_set
         self.sky_cubemap = sky_cubemap
         # self.world_to_nre = world_to_nre  # Unused, converted by client
         self.device = device
         self.verbose = verbose
-        self.usdz_path = usdz_path
+        self.ckpt_path = ckpt_path
         self.console = Console()
         self.render_count = 0
         self.last_traffic_pose: Optional[dict] = None
@@ -99,29 +99,29 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
 
         return response
 
-    def SwitchUsdz(self, request: render_pb2.SwitchUsdzRequest, context) -> render_pb2.SwitchUsdzResponse:
-        """Handle USDZ scene switch requests."""
-        response = render_pb2.SwitchUsdzResponse()
+    def LoadModel(self, request: render_pb2.LoadModelRequest, context) -> render_pb2.LoadModelResponse:
+        """Handle checkpoint model load requests."""
+        response = render_pb2.LoadModelResponse()
         try:
-            usdz_path = request.usdz_path
-            if not usdz_path:
-                raise ValueError("usdz_path must be a non-empty string")
+            ckpt_path = request.ckpt_path
+            if not ckpt_path:
+                raise ValueError("ckpt_path must be a non-empty string")
 
-            path = Path(usdz_path).expanduser()
+            path = Path(ckpt_path).expanduser()
             if not path.is_absolute():
                 path = (Path.cwd() / path).resolve()
 
             if not path.exists():
-                raise FileNotFoundError(f"USDZ file not found: {path}")
+                raise FileNotFoundError(f"Checkpoint file not found: {path}")
 
-            data = load_nurec_data(path, self.device)
+            data = load_nurec_checkpoint(path, self.device)
 
             with self._scene_lock:
                 self.gaussian_set = data.gaussian_set
                 self.sky_cubemap = data.sky_cubemap
                 self.last_traffic_pose = None
                 self.render_count = 0
-                self.usdz_path = path
+                self.ckpt_path = path
 
             response.success = True
         except Exception as e:
@@ -270,16 +270,16 @@ def serve(config: ServerConfig):
 
     gaussian_set = None
     sky_cubemap = None
-    if config.usdz_path is not None:
-        if not config.usdz_path.exists():
-            print(f"Error: USDZ file not found: {config.usdz_path}")
+    if config.ckpt_path is not None:
+        if not config.ckpt_path.exists():
+            print(f"Error: Checkpoint file not found: {config.ckpt_path}")
             return
-        print(f"Loading NuRec data from {config.usdz_path}...")
-        data = load_nurec_data(config.usdz_path, device)
+        print(f"Loading checkpoint from {config.ckpt_path}...")
+        data = load_nurec_checkpoint(config.ckpt_path, device)
         gaussian_set = data.gaussian_set
         sky_cubemap = data.sky_cubemap
     else:
-        print("No USDZ specified at startup. Waiting for SwitchUsdz request...")
+        print("No checkpoint specified at startup. Waiting for LoadModel request...")
 
     # Create servicer
     servicer = RenderServicer(
@@ -287,7 +287,7 @@ def serve(config: ServerConfig):
         sky_cubemap,
         device,
         verbose=config.verbose,
-        usdz_path=config.usdz_path,
+        ckpt_path=config.ckpt_path,
     )
 
     # Start server with increased message size (256 MB for high-res images)
@@ -312,7 +312,7 @@ def serve(config: ServerConfig):
 
 
 def server(
-    usdz_path: Optional[Path] = None,
+    ckpt_path: Optional[Path] = None,
     host: str = "0.0.0.0",
     port: int = 50051,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -321,13 +321,13 @@ def server(
     """Start gRPC server for remote rendering.
 
     Args:
-        usdz_path: Path to the USDZ file
+        ckpt_path: Path to the checkpoint file
         host: Host address to bind (default: 0.0.0.0)
         port: Port to listen on (default: 50051)
         device: Device for rendering (default: cuda if available)
         verbose: Enable verbose logging (default: False)
     """
-    config = ServerConfig(usdz_path=usdz_path, host=host, port=port, device=device, verbose=verbose)
+    config = ServerConfig(ckpt_path=ckpt_path, host=host, port=port, device=device, verbose=verbose)
     serve(config)
 
 

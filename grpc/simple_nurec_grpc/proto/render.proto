@@ -65,7 +65,7 @@ message RenderRequest {
 }
 
 message TrafficPoseRequest {
-    // Traffic type id
+    // Object id
     string object_id = 1;
 
     // 4x4 row-major matrix
@@ -77,12 +77,12 @@ message TrafficPoseResponse {
     string error_message = 2;
 }
 
-message SwitchUsdzRequest {
-    // USDZ file path to load.
-    string usdz_path = 1;
+message LoadModelRequest {
+    // Checkpoint file path to load.
+    string ckpt_path = 1;
 }
 
-message SwitchUsdzResponse {
+message LoadModelResponse {
     bool success = 1;
     string error_message = 2;
 }
@@ -106,6 +106,6 @@ service RenderService {
     // Update traffic pose override for rendering
     rpc SetTrafficPose(TrafficPoseRequest) returns (TrafficPoseResponse);
 
-    // Switch the loaded USDZ scene for rendering
-    rpc SwitchUsdz(SwitchUsdzRequest) returns (SwitchUsdzResponse);
+    // Load the checkpoint model for rendering
+    rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
 }
