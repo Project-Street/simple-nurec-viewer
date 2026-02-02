@@ -177,6 +177,22 @@ def load_nurec_checkpoint(
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
 
+    # Auto-load tracks data from the checkpoint directory if not provided.
+    if tracks_data is None:
+        datasource_path = ckpt_path.parent / "datasource_summary.json"
+        print(f"Loading tracks data from {datasource_path}...")
+        with open(datasource_path, "r") as f:
+            datasource_data = json.load(f)
+        seq_tracks_dynamic = datasource_data.get("sequence_tracks_dynamic", {})
+        if seq_tracks_dynamic:
+            first_key = list(seq_tracks_dynamic.keys())[0]
+            tracks_data = seq_tracks_dynamic[first_key]
+            print(
+                f"Loaded tracks data with {len(tracks_data.get('tracks_data', {}).get('tracks_id', []))} tracks"
+            )
+        else:
+            print("No sequence_tracks_dynamic found in datasource_summary.json")
+
     print(f"Loading checkpoint from {ckpt_path}...")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
