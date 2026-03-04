@@ -18,13 +18,13 @@ from rich.console import Console
 
 import grpc
 
-if not importlib.util.find_spec("simple_nurec_grpc"):
+if not importlib.util.find_spec("simple_nurec_viewer.grpc"):
     print("ERROR: Cannot import grpc package. Please install the gRPC package:\n" "   pip install -e grpc/\n")
     raise SystemExit(1)
 
 # Import FTheta distortion parameters
 from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
-from simple_nurec_grpc import render_pb2, render_pb2_grpc
+from simple_nurec_viewer.grpc import render_pb2, render_pb2_grpc
 
 from simple_nurec_viewer.core.loader import load_nurec_checkpoint
 from simple_nurec_viewer.core.rendering import RenderContext, render_frame

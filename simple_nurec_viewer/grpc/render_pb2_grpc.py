@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import render_pb2 as render__pb2
+from . import render_pb2 as render__pb2
 
 
 class RenderServiceStub(object):

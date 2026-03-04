@@ -62,9 +62,13 @@ simple-nurec = "simple_nurec_viewer.__main__:main"
 [tool.setuptools]
 packages = [
   "simple_nurec_viewer",
+  "simple_nurec_viewer.cli",
+  "simple_nurec_viewer.core",
+  "simple_nurec_viewer.export",
+  "simple_nurec_viewer.grpc",
   "simple_nurec_viewer.scenes",
   "simple_nurec_viewer.scenes.gaussians",
-  "simple_nurec_viewer.cli",
+  "simple_nurec_viewer.utils",
 ]
 
 # ruff
