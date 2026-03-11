@@ -65,11 +65,11 @@ message RenderRequest {
 }
 
 message TrafficPoseRequest {
-    // Object id
-    string object_id = 1;
+    // Objects id
+    repeated string tracks_id = 1;
 
     // 4x4 row-major matrix
-    repeated float pose_4x4 = 2;
+    repeated float poses_4x4 = 2;
 }
 
 message TrafficPoseResponse {

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import threading
+import traceback
 
 import numpy as np
 import torch
@@ -29,7 +30,7 @@ from simple_nurec_viewer.grpc import render_pb2, render_pb2_grpc
 from simple_nurec_viewer.core.loader import load_nurec_checkpoint
 from simple_nurec_viewer.core.rendering import RenderContext, render_frame
 
-
+import time
 @dataclass
 class ServerConfig:
     """Configuration for the gRPC rendering server."""
@@ -76,26 +77,21 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         """Handle traffic pose update requests."""
         response = render_pb2.TrafficPoseResponse()
         try:
-            object_id = request.object_id
-            if not object_id:
-                raise ValueError("object_id must be a non-empty string")
+            tracks_id = [str(track_id) for track_id in request.tracks_id]
+            if any(not track_id for track_id in tracks_id):
+                raise ValueError("tracks_id must contain only non-empty strings")
 
-            if len(request.pose_4x4) != 16:
-                raise ValueError(f"pose_4x4 must have 16 elements, got {len(request.pose_4x4)}")
-
-            pose = np.array(request.pose_4x4, dtype=np.float32).reshape(4, 4)
-            if not np.isfinite(pose).all():
-                raise ValueError("pose_4x4 contains non-finite values")
+            poses = np.array(request.poses_4x4, dtype=np.float32).reshape(len(tracks_id), 4, 4)
 
             with self._scene_lock:
                 self.last_traffic_pose = {
-                    "object_id": object_id,
-                    "pose_4x4": pose,
+                    "tracks_id": tracks_id,
+                    "poses_4x4": poses,
                 }
             response.success = True
         except Exception as e:
             response.success = False
-            response.error_message = f"{type(e).__name__}: {str(e)}"
+            response.error_message = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
 
         return response
 
@@ -126,14 +122,13 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
             response.success = True
         except Exception as e:
             response.success = False
-            response.error_message = f"{type(e).__name__}: {str(e)}"
+            response.error_message = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
 
         return response
 
     def Render(self, request: render_pb2.RenderRequest, context) -> render_pb2.RenderResponse:
         """Handle render requests."""
         import time
-        import traceback
 
         start_time = time.perf_counter()
         response = render_pb2.RenderResponse()

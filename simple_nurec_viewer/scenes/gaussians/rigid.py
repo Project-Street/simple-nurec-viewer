@@ -5,13 +5,33 @@ This module provides the RigidGaussian class that extends BaseGaussian
 to support time-varying rigid body transforms from trajectory data.
 """
 
-from typing import Dict, List, Optional, Tuple
+import logging
+from typing import Optional, Tuple
 
-import numpy as np
 import torch
-
+import time
 from ...utils.rigid import build_rotation, matrix_to_quaternion, quaternion_multiply, slerp
 from .base import BaseGaussian
+
+
+logger = logging.getLogger(__name__)
+
+
+def _slerp_batch(v1: torch.Tensor, v2: torch.Tensor, t: torch.Tensor, dot_thr: float = 0.9995) -> torch.Tensor:
+    """Vectorized SLERP for tensors shaped ``[N, 4]`` and interpolation weights ``[N]``."""
+    dot = torch.nn.functional.cosine_similarity(v1, v2, dim=-1)
+    linear_mask = torch.abs(dot) > dot_thr
+
+    result = (1.0 - t.unsqueeze(-1)) * v1 + t.unsqueeze(-1) * v2
+    spherical_mask = ~linear_mask
+    if spherical_mask.any():
+        theta = torch.acos(torch.clamp(dot[spherical_mask], -1.0, 1.0))
+        theta_t = theta * t[spherical_mask]
+        sin_theta = torch.sin(theta)
+        s1 = torch.sin(theta - theta_t) / sin_theta
+        s2 = torch.sin(theta_t) / sin_theta
+        result[spherical_mask] = s1.unsqueeze(-1) * v1[spherical_mask] + s2.unsqueeze(-1) * v2[spherical_mask]
+    return result
 
 
 class RigidGaussian(BaseGaussian):
@@ -68,184 +88,287 @@ class RigidGaussian(BaseGaussian):
         )
         self.cuboid_ids = cuboid_ids.to(device)
 
-        # Build mapping from cuboid_id to track_idx
-        # The correct flow is:
-        #   1. gaussian_cuboid_ids value (e.g., 2) -> index into dynamic_rigids_track_mapping
-        #   2. dynamic_rigids_track_mapping[2] -> track name (e.g., '2@scene:...')
-        #   3. track name -> index in tracks_id array -> actual track_idx
-        self.cuboid_to_track_idx = {}
+        # Naming:
+        # - object_track_id: string id from sequence_tracks_dynamic["tracks_id"]
+        # - sequence_track_index: dense row index into sequence_tracks_dynamic tables
+        # - cuboid_index: index from checkpoint dynamic_rigids_track_mapping / gaussian_cuboid_ids
+        self._sequence_track_index_by_object_track_id: dict[str, int] = {}
+        self._object_track_id_by_sequence_track_index: list[str] = []
+        self._sequence_track_index_per_gaussian: Optional[torch.Tensor] = None
+        self._sequence_track_count = 0
+        self._sequence_track_has_gaussian_mask: Optional[torch.Tensor] = None
         if tracks_data is not None and dynamic_rigids_track_mapping is not None:
-            tracks_id_list = tracks_data.get("tracks_data", {}).get("tracks_id", [])
-            # Build map: track_name (e.g., '2@...') -> track_idx (index in tracks_id array)
-            track_name_to_idx = {name: idx for idx, name in enumerate(tracks_id_list)}
-            # Build map: cuboid_id (which is index into dynamic_rigids_track_mapping) -> track_idx
-            for idx, track_name in enumerate(dynamic_rigids_track_mapping):
-                if track_name in track_name_to_idx:
-                    self.cuboid_to_track_idx[idx] = track_name_to_idx[track_name]
+            object_track_ids = tracks_data.get("tracks_data", {}).get("tracks_id", [])
+            self._object_track_id_by_sequence_track_index = [str(object_track_id) for object_track_id in object_track_ids]
+            self._sequence_track_index_by_object_track_id = {
+                str(object_track_id): sequence_track_index
+                for sequence_track_index, object_track_id in enumerate(object_track_ids)
+            }
+            self._sequence_track_count = len(object_track_ids)
+            sequence_track_index_per_cuboid = []
+            for cuboid_index, object_track_id in enumerate(dynamic_rigids_track_mapping):
+                object_track_id_str = str(object_track_id)
+                if object_track_id_str not in self._sequence_track_index_by_object_track_id:
+                    raise KeyError(
+                        f"Missing track data for cuboid_index={cuboid_index}, object_track_id={object_track_id_str}"
+                    )
+                sequence_track_index_per_cuboid.append(
+                    self._sequence_track_index_by_object_track_id[object_track_id_str]
+                )
+            sequence_track_index_per_cuboid_tensor = torch.tensor(
+                sequence_track_index_per_cuboid,
+                device=device,
+                dtype=torch.long,
+            )
+            cuboid_index_per_gaussian = self.cuboid_ids.to(torch.long)
+            if cuboid_index_per_gaussian.numel() > 0:
+                if (
+                    cuboid_index_per_gaussian.min().item() < 0
+                    or cuboid_index_per_gaussian.max().item() >= sequence_track_index_per_cuboid_tensor.numel()
+                ):
+                    raise IndexError("gaussian_cuboid_ids contains out-of-range cuboid indices")
+            self._sequence_track_index_per_gaussian = sequence_track_index_per_cuboid_tensor[cuboid_index_per_gaussian]
+            self._sequence_track_has_gaussian_mask = torch.zeros(self._sequence_track_count, device=device, dtype=torch.bool)
+            self._sequence_track_has_gaussian_mask[self._sequence_track_index_per_gaussian] = True
 
         # Preprocess and normalize track poses: convert quaternion from xyzw to wxyz format
         # This avoids repeated conversions during runtime
+        self._track_pose_table: Optional[torch.Tensor] = None
+        self._track_timestamp_table_s: Optional[torch.Tensor] = None
+        self._track_frame_counts: Optional[torch.Tensor] = None
+        self._gaussian_track_pose_table: Optional[torch.Tensor] = None
+        self._gaussian_track_timestamp_table_s: Optional[torch.Tensor] = None
+        self._gaussian_track_frame_counts: Optional[torch.Tensor] = None
         if tracks_data is not None:
             tracks_dict = tracks_data.get("tracks_data", {})
             tracks_poses = tracks_dict.get("tracks_poses", [])
+            tracks_timestamps_us = tracks_dict.get("tracks_timestamps_us", [])
 
             # Convert all track poses from xyzw to wxyz quaternion format
             # Original format: [x, y, z, qx, qy, qz, qw]
             # Target format: [x, y, z, qw, qx, qy, qz]
             for track_idx in range(len(tracks_poses)):
-                poses = np.array(tracks_poses[track_idx])  # [N_frames, 7]
-                if len(poses) > 0:
-                    # Swap quaternion components: [qx, qy, qz, qw] -> [qw, qx, qy, qz]
-                    # poses[:, 3:7] is [qx, qy, qz, qw], need to reorder to [qw, qx, qy, qz]
-                    q_xyzw = poses[:, 3:7]  # [N, 4] in xyzw format
-                    q_wxyz = q_xyzw[:, [3, 0, 1, 2]]  # [N, 4] in wxyz format
-                    poses[:, 3:7] = q_wxyz
-                    tracks_poses[track_idx] = poses.tolist()
+                poses = tracks_poses[track_idx]
+                if poses:
+                    pose_tensor = torch.as_tensor(poses, dtype=torch.float32)  # [N_frames, 7]
+                    q_xyzw = pose_tensor[:, 3:7]  # [N, 4] in xyzw format
+                    pose_tensor[:, 3:7] = q_xyzw[:, [3, 0, 1, 2]]  # [N, 4] in wxyz format
+                    tracks_poses[track_idx] = pose_tensor.tolist()
 
             # Update tracks_data with converted poses
             tracks_dict["tracks_poses"] = tracks_poses
             tracks_data["tracks_data"] = tracks_dict
 
+            if len(tracks_poses) != len(tracks_timestamps_us):
+                raise ValueError("tracks_poses and tracks_timestamps_us length mismatch")
+            if tracks_poses:
+                max_track_len = max(len(track_pose) for track_pose in tracks_poses)
+                track_pose_table = torch.zeros((len(tracks_poses), max_track_len, 7), device=device, dtype=torch.float32)
+                track_timestamp_table_s = torch.zeros((len(tracks_timestamps_us), max_track_len), device=device, dtype=torch.float32)
+                track_frame_counts = torch.zeros(len(tracks_poses), device=device, dtype=torch.long)
+                for track_idx, (track_pose_sequence, track_timestamp_sequence) in enumerate(zip(tracks_poses, tracks_timestamps_us)):
+                    if len(track_pose_sequence) != len(track_timestamp_sequence):
+                        raise ValueError(f"Track {track_idx} pose/timestamp length mismatch")
+                    if not track_pose_sequence:
+                        raise ValueError(f"Track {track_idx} has no poses")
+                    frame_count = len(track_pose_sequence)
+                    track_pose_table[track_idx, :frame_count] = torch.as_tensor(
+                        track_pose_sequence,
+                        device=device,
+                        dtype=torch.float32,
+                    )
+                    track_timestamp_table_s[track_idx, :frame_count] = (
+                        torch.as_tensor(track_timestamp_sequence, device=device, dtype=torch.float32) / 1e6
+                    )
+                    track_frame_counts[track_idx] = frame_count
+                self._track_pose_table = track_pose_table
+                self._track_timestamp_table_s = track_timestamp_table_s
+                self._track_frame_counts = track_frame_counts
+                if self._sequence_track_index_per_gaussian is not None:
+                    self._gaussian_track_pose_table = track_pose_table[self._sequence_track_index_per_gaussian]
+                    self._gaussian_track_timestamp_table_s = track_timestamp_table_s[self._sequence_track_index_per_gaussian]
+                    self._gaussian_track_frame_counts = track_frame_counts[self._sequence_track_index_per_gaussian]
+
         self.tracks_data = tracks_data
 
-    def _load_track_from_usd(self, track_idx: int, timestamp: float) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Load track transform from datasource_summary.json with time interpolation.
+    def _sample_transforms_for_tracks(
+        self,
+        sequence_track_indices: torch.Tensor,
+        timestamp: float,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Sample rigid transforms for the given sequence-track indices in parallel."""
+        if self._track_pose_table is None or self._track_timestamp_table_s is None or self._track_frame_counts is None:
+            raise RuntimeError("Rigid track tables are not initialized")
 
-        Args:
-            track_idx: Track index (0-based, matches cuboid_id)
-            timestamp: Target timestamp in seconds
-
-        Returns:
-            Tuple of (quaternion [4], translation [3])
-        """
-        if self.tracks_data is None:
-            # Return identity transform if no tracks data
+        sequence_track_indices = sequence_track_indices.to(device=self.device, dtype=torch.long)
+        if sequence_track_indices.numel() == 0:
             return (
-                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device),
-                torch.zeros(3, device=self.device),
+                torch.empty((0, 4), device=self.device, dtype=torch.float32),
+                torch.empty((0, 3), device=self.device, dtype=torch.float32),
             )
 
-        tracks_dict = self.tracks_data.get("tracks_data", {})
-        tracks_poses = tracks_dict.get("tracks_poses", [])
-        tracks_timestamps_us = tracks_dict.get("tracks_timestamps_us", [])
+        sampled_track_poses = self._track_pose_table[sequence_track_indices]
+        sampled_track_timestamps_s = self._track_timestamp_table_s[sequence_track_indices]
+        sampled_track_frame_counts = self._track_frame_counts[sequence_track_indices]
+        query_timestamps_s = torch.full((sequence_track_indices.shape[0], 1), float(timestamp), device=self.device, dtype=torch.float32)
 
-        # Check if track_idx is valid
-        if track_idx >= len(tracks_poses) or track_idx >= len(tracks_timestamps_us):
-            # Track index out of range, return identity
-            return (
-                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device),
-                torch.zeros(3, device=self.device),
-            )
+        insertion_indices = torch.searchsorted(sampled_track_timestamps_s.contiguous(), query_timestamps_s, right=False).squeeze(-1)
+        insertion_indices = torch.clamp(insertion_indices, min=1)
+        insertion_indices = torch.minimum(insertion_indices, sampled_track_frame_counts - 1)
 
-        # Get poses and timestamps for this track
-        poses = tracks_poses[track_idx]  # List of [N_frames, 7]
-        timestamps_us = tracks_timestamps_us[track_idx]  # List of timestamps in microseconds
+        first_frame_indices = torch.zeros_like(insertion_indices)
+        last_frame_indices = sampled_track_frame_counts - 1
+        first_timestamps_s = sampled_track_timestamps_s[:, 0]
+        last_timestamps_s = sampled_track_timestamps_s.gather(1, last_frame_indices.unsqueeze(-1)).squeeze(-1)
 
-        # Convert to numpy arrays
-        poses = np.array(poses)  # [N_frames, 7]
-        timestamps_us = np.array(timestamps_us)  # [N_frames]
-        timestamps_s = timestamps_us / 1e6  # Convert to seconds
+        use_first_frame_mask = query_timestamps_s.squeeze(-1) <= first_timestamps_s
+        use_last_frame_mask = query_timestamps_s.squeeze(-1) >= last_timestamps_s
 
-        # Check if we have poses
-        if len(poses) == 0:
-            return (
-                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device),
-                torch.zeros(3, device=self.device),
-            )
+        previous_frame_indices = insertion_indices - 1
+        next_frame_indices = insertion_indices
+        previous_poses = sampled_track_poses.gather(
+            1,
+            previous_frame_indices[:, None, None].expand(-1, 1, 7),
+        ).squeeze(1)
+        next_poses = sampled_track_poses.gather(
+            1,
+            next_frame_indices[:, None, None].expand(-1, 1, 7),
+        ).squeeze(1)
+        previous_timestamps_s = sampled_track_timestamps_s.gather(1, previous_frame_indices.unsqueeze(-1)).squeeze(-1)
+        next_timestamps_s = sampled_track_timestamps_s.gather(1, next_frame_indices.unsqueeze(-1)).squeeze(-1)
 
-        # Check if timestamp is within range
-        # Note: poses are now in wxyz format after preprocessing in __init__
-        if timestamp <= timestamps_s[0]:
-            pose = poses[0]
-            t = torch.tensor(pose[:3], device=self.device, dtype=torch.float32)
-            q = torch.tensor(pose[3:7], device=self.device, dtype=torch.float32)
-            return q, t
-        elif timestamp >= timestamps_s[-1]:
-            pose = poses[-1]
-            t = torch.tensor(pose[:3], device=self.device, dtype=torch.float32)
-            q = torch.tensor(pose[3:7], device=self.device, dtype=torch.float32)
-            return q, t
+        interpolation_denominator = torch.where(
+            next_timestamps_s != previous_timestamps_s,
+            next_timestamps_s - previous_timestamps_s,
+            torch.ones_like(next_timestamps_s),
+        )
+        interpolation_alpha = (query_timestamps_s.squeeze(-1) - previous_timestamps_s) / interpolation_denominator
+        interpolation_alpha = torch.where(
+            next_timestamps_s != previous_timestamps_s,
+            interpolation_alpha,
+            torch.zeros_like(interpolation_alpha),
+        )
+        interpolation_alpha = torch.clamp(interpolation_alpha, 0.0, 1.0)
 
-        # Find the two closest timestamps for interpolation
-        idx = np.searchsorted(timestamps_s, timestamp)
+        translations = previous_poses[:, :3] + interpolation_alpha.unsqueeze(-1) * (next_poses[:, :3] - previous_poses[:, :3])
+        quaternions = _slerp_batch(previous_poses[:, 3:7], next_poses[:, 3:7], interpolation_alpha)
 
-        # Interpolate between idx-1 and idx
-        t0, t1 = timestamps_s[idx - 1], timestamps_s[idx]
-        alpha = (timestamp - t0) / (t1 - t0) if t1 != t0 else 0.0
+        first_poses = sampled_track_poses.gather(1, first_frame_indices[:, None, None].expand(-1, 1, 7)).squeeze(1)
+        last_poses = sampled_track_poses.gather(1, last_frame_indices[:, None, None].expand(-1, 1, 7)).squeeze(1)
 
-        # Get poses at t0 and t1
-        pose0 = poses[idx - 1]  # [7]
-        pose1 = poses[idx]  # [7]
+        translations = torch.where(use_first_frame_mask.unsqueeze(-1), first_poses[:, :3], translations)
+        translations = torch.where(use_last_frame_mask.unsqueeze(-1), last_poses[:, :3], translations)
+        quaternions = torch.where(use_first_frame_mask.unsqueeze(-1), first_poses[:, 3:7], quaternions)
+        quaternions = torch.where(use_last_frame_mask.unsqueeze(-1), last_poses[:, 3:7], quaternions)
+        return quaternions, translations
 
-        # Extract translations and quaternions
-        # pose format: [x, y, z, qw, qx, qy, qz] (already converted in __init__)
-        t0_np = pose0[:3]
-        t1_np = pose1[:3]
-        q0_np = pose0[3:7]
-        q1_np = pose1[3:7]
+    def _sample_transforms_for_all_gaussians(self, timestamp: float) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Sample rigid transforms for the fixed per-Gaussian track assignment."""
 
-        # Linear interpolation for translation
-        t_interp = t0_np + alpha * (t1_np - t0_np)
+        sampled_track_poses = self._gaussian_track_pose_table
+        sampled_track_timestamps_s = self._gaussian_track_timestamp_table_s
+        sampled_track_frame_counts = self._gaussian_track_frame_counts
+        query_timestamps_s = torch.full(
+            (sampled_track_frame_counts.shape[0], 1),
+            float(timestamp),
+            device=self.device,
+            dtype=torch.float32,
+        )
 
-        # SLERP interpolation for quaternion
-        q0_tensor = torch.tensor(q0_np, device=self.device, dtype=torch.float32)
-        q1_tensor = torch.tensor(q1_np, device=self.device, dtype=torch.float32)
-        q_interp = slerp(q0_tensor, q1_tensor, alpha)
+        insertion_indices = torch.searchsorted(sampled_track_timestamps_s.contiguous(), query_timestamps_s, right=False).squeeze(-1)
+        insertion_indices = torch.clamp(insertion_indices, min=1)
+        insertion_indices = torch.minimum(insertion_indices, sampled_track_frame_counts - 1)
 
-        t = torch.tensor(t_interp, device=self.device, dtype=torch.float32)
+        first_frame_indices = torch.zeros_like(insertion_indices)
+        last_frame_indices = sampled_track_frame_counts - 1
+        first_timestamps_s = sampled_track_timestamps_s[:, 0]
+        last_timestamps_s = sampled_track_timestamps_s.gather(1, last_frame_indices.unsqueeze(-1)).squeeze(-1)
 
-        return q_interp, t
+        use_first_frame_mask = query_timestamps_s.squeeze(-1) <= first_timestamps_s
+        use_last_frame_mask = query_timestamps_s.squeeze(-1) >= last_timestamps_s
 
-    def _resolve_override_track_indices(self, object_id: str) -> List[int]:
-        """Resolve object_id to track indices (cuboid ids)."""
-        if not object_id:
-            return []
+        previous_frame_indices = insertion_indices - 1
+        next_frame_indices = insertion_indices
+        previous_poses = sampled_track_poses.gather(
+            1,
+            previous_frame_indices[:, None, None].expand(-1, 1, 7),
+        ).squeeze(1)
+        next_poses = sampled_track_poses.gather(
+            1,
+            next_frame_indices[:, None, None].expand(-1, 1, 7),
+        ).squeeze(1)
+        previous_timestamps_s = sampled_track_timestamps_s.gather(1, previous_frame_indices.unsqueeze(-1)).squeeze(-1)
+        next_timestamps_s = sampled_track_timestamps_s.gather(1, next_frame_indices.unsqueeze(-1)).squeeze(-1)
 
-        resolved = set()
+        interpolation_denominator = torch.where(
+            next_timestamps_s != previous_timestamps_s,
+            next_timestamps_s - previous_timestamps_s,
+            torch.ones_like(next_timestamps_s),
+        )
+        interpolation_alpha = (query_timestamps_s.squeeze(-1) - previous_timestamps_s) / interpolation_denominator
+        interpolation_alpha = torch.where(
+            next_timestamps_s != previous_timestamps_s,
+            interpolation_alpha,
+            torch.zeros_like(interpolation_alpha),
+        )
+        interpolation_alpha = torch.clamp(interpolation_alpha, 0.0, 1.0)
 
-        if self.tracks_data is not None:
-            tracks_dict = self.tracks_data.get("tracks_data", {})
-            tracks_id = tracks_dict.get("tracks_id", [])
+        translations = previous_poses[:, :3] + interpolation_alpha.unsqueeze(-1) * (next_poses[:, :3] - previous_poses[:, :3])
+        quaternions = _slerp_batch(previous_poses[:, 3:7], next_poses[:, 3:7], interpolation_alpha)
 
-            for idx, track_id in enumerate(tracks_id):
-                if str(track_id) == object_id:
-                    resolved.add(idx)
+        first_poses = sampled_track_poses.gather(1, first_frame_indices[:, None, None].expand(-1, 1, 7)).squeeze(1)
+        last_poses = sampled_track_poses.gather(1, last_frame_indices[:, None, None].expand(-1, 1, 7)).squeeze(1)
 
-        if not resolved:
-            try:
-                resolved.add(int(object_id))
-            except (TypeError, ValueError):
-                pass
+        translations = torch.where(use_first_frame_mask.unsqueeze(-1), first_poses[:, :3], translations)
+        translations = torch.where(use_last_frame_mask.unsqueeze(-1), last_poses[:, :3], translations)
+        quaternions = torch.where(use_first_frame_mask.unsqueeze(-1), first_poses[:, 3:7], quaternions)
+        quaternions = torch.where(use_last_frame_mask.unsqueeze(-1), last_poses[:, 3:7], quaternions)
+        return quaternions, translations
 
-        return sorted(resolved)
-
-    def _build_override_map(self, traffic_pose_override: Optional[dict]) -> Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]]:
-        """Build an override map from traffic pose payload."""
-        if not traffic_pose_override:
+    def _build_override_map(
+        self, traffic_pose_override: Optional[dict]
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """Parse traffic pose payload into ``(track_indices, quaternions, translations)`` tensors."""
+        if traffic_pose_override is None:
             return None
 
-        object_id = traffic_pose_override.get("object_id")
-        pose_4x4 = traffic_pose_override.get("pose_4x4")
-        if not object_id or pose_4x4 is None:
+        override_object_track_ids = traffic_pose_override["tracks_id"]
+        override_poses = torch.as_tensor(traffic_pose_override["poses_4x4"], device=self.device, dtype=torch.float32)
+        override_poses = override_poses.reshape(len(override_object_track_ids), 4, 4)
+
+        override_sequence_track_indices = torch.tensor(
+            [
+                self._sequence_track_index_by_object_track_id.get(object_track_id, -1)
+                for object_track_id in override_object_track_ids
+            ],
+            device=self.device,
+            dtype=torch.long,
+        )
+        valid_sequence_track_mask = override_sequence_track_indices >= 0
+        if not valid_sequence_track_mask.any():
             return None
 
-        pose_tensor = torch.as_tensor(pose_4x4, device=self.device, dtype=torch.float32)
-        if pose_tensor.shape != (4, 4):
+        override_sequence_track_indices = override_sequence_track_indices[valid_sequence_track_mask]
+        override_poses = override_poses[valid_sequence_track_mask]
+        if self._sequence_track_has_gaussian_mask is None:
+            raise RuntimeError("Rigid track mappings are not initialized")
+
+        valid_gaussian_track_mask = self._sequence_track_has_gaussian_mask[override_sequence_track_indices]
+        if not valid_gaussian_track_mask.any():
             return None
+        override_sequence_track_indices = override_sequence_track_indices[valid_gaussian_track_mask]
+        override_poses = override_poses[valid_gaussian_track_mask]
 
-        rotation = pose_tensor[:3, :3]
-        translation = pose_tensor[:3, 3]
-        quat = matrix_to_quaternion(rotation)
-
-        track_indices = self._resolve_override_track_indices(object_id)
-        if not track_indices:
-            return None
-
-        return {track_idx: (quat, translation) for track_idx in track_indices}
+        override_quaternions = matrix_to_quaternion(override_poses[:, :3, :3])
+        override_translations = override_poses[:, :3, 3]
+        return (
+            override_sequence_track_indices,
+            override_quaternions,
+            override_translations,
+        )
 
     def _get_base_transform(
-        self, timestamp: float, override_map: Optional[Dict[int, Tuple[torch.Tensor, torch.Tensor]]] = None
+        self, timestamp: float, override_map: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Get base rigid transform for a given timestamp.
@@ -257,39 +380,32 @@ class RigidGaussian(BaseGaussian):
         Returns:
             Tuple of (quaternions [N, 4], translations [N, 3]) for each Gaussian
         """
-        # Build mapping from cuboid_id to its transform for this timestamp
-        cuboid_to_transform = {}
+        base_quaternions, base_translations = self._sample_transforms_for_all_gaussians(timestamp)
+        if override_map is not None:
+            override_sequence_track_indices, override_quaternions, override_translations = override_map
+ 
+            override_quaternion_table = torch.zeros((self._sequence_track_count, 4), device=self.device, dtype=torch.float32)
+            override_quaternion_table[:, 0] = 1.0
+            override_translation_table = torch.zeros((self._sequence_track_count, 3), device=self.device, dtype=torch.float32)
+            sequence_track_has_override = torch.zeros(self._sequence_track_count, device=self.device, dtype=torch.bool)
 
-        for cuboid_id in torch.unique(self.cuboid_ids):
-            # Map cuboid_id to track_idx using the correct mapping
-            # cuboid_id -> track_name -> track_idx in tracks_id array
-            track_idx = self.cuboid_to_track_idx.get(int(cuboid_id), int(cuboid_id))
+            override_quaternion_table[override_sequence_track_indices] = override_quaternions
+            override_translation_table[override_sequence_track_indices] = override_translations
+            sequence_track_has_override[override_sequence_track_indices] = True
 
-            # Load track transform from JSON with interpolation
-            if override_map is not None and track_idx in override_map:
-                q, t = override_map[track_idx]
-            else:
-                q, t = self._load_track_from_usd(track_idx, timestamp)
+            gaussian_has_override = sequence_track_has_override[self._sequence_track_index_per_gaussian]
+            base_quaternions = torch.where(
+                gaussian_has_override.unsqueeze(-1),
+                override_quaternion_table[self._sequence_track_index_per_gaussian],
+                base_quaternions,
+            )
+            base_translations = torch.where(
+                gaussian_has_override.unsqueeze(-1),
+                override_translation_table[self._sequence_track_index_per_gaussian],
+                base_translations,
+            )
 
-            cuboid_to_transform[int(cuboid_id)] = (q, t)
-
-        # Expand to all Gaussians based on their cuboid_ids
-        num_gaussians = len(self.cuboid_ids)
-        expanded_q = torch.zeros(num_gaussians, 4, device=self.device)
-        expanded_t = torch.zeros(num_gaussians, 3, device=self.device)
-
-        for i, cuboid_id in enumerate(self.cuboid_ids):
-            cid_int = int(cuboid_id)
-            if cid_int in cuboid_to_transform:
-                q, t = cuboid_to_transform[cid_int]
-                expanded_q[i] = q
-                expanded_t[i] = t
-            else:
-                # Identity transform if no track found
-                expanded_q[i] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)
-                expanded_t[i] = torch.zeros(3, device=self.device)
-
-        return expanded_q, expanded_t
+        return base_quaternions, base_translations
 
     def collect(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -314,25 +430,29 @@ class RigidGaussian(BaseGaussian):
         means, quats, scales, opacities, colors = self._collect_impl()
 
         traffic_pose_override = kwargs.get("traffic_pose_override", None)
+
         override_map = self._build_override_map(traffic_pose_override)
 
         # Apply rigid transform if timestamp or override is provided
         if timestamp is not None or override_map is not None:
             # Get base transform for this timestamp
             effective_timestamp = 0.0 if timestamp is None else timestamp
-            track_q, track_t = self._get_base_transform(effective_timestamp, override_map=override_map)
+            rigid_quaternions, rigid_translations = self._get_base_transform(
+                effective_timestamp,
+                override_map=override_map,
+            )
 
             # Build rotation matrices
-            track_R = build_rotation(track_q)  # [N, 3, 3]
+            rigid_rotations = build_rotation(rigid_quaternions)  # [N, 3, 3]
 
             # Apply rotation to positions
             # positions_transformed = (R @ positions.T).T + translation
-            positions_transformed = torch.bmm(track_R, means.unsqueeze(-1)).squeeze(-1) + track_t
+            positions_transformed = torch.bmm(rigid_rotations, means.unsqueeze(-1)).squeeze(-1) + rigid_translations
 
             # Also rotate the Gaussian orientations
             # new_rotation = quaternion_multiply(track_q, base_rotation)
             rotations_transformed = quaternion_multiply(
-                track_q,  # [N, 4]
+                rigid_quaternions,  # [N, 4]
                 self.rotations,  # [N, 4]
             )
 

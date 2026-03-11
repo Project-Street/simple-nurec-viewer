@@ -50,15 +50,27 @@ def build_rotation(r: torch.Tensor) -> torch.Tensor:
     y = q[..., 2]
     z = q[..., 3]
 
-    R[..., 0, 0] = 1 - 2 * (y * y + z * z)
-    R[..., 0, 1] = 2 * (x * y - w * z)
-    R[..., 0, 2] = 2 * (x * z + w * y)
-    R[..., 1, 0] = 2 * (x * y + w * z)
-    R[..., 1, 1] = 1 - 2 * (x * x + z * z)
-    R[..., 1, 2] = 2 * (y * z - w * x)
-    R[..., 2, 0] = 2 * (x * z - w * y)
-    R[..., 2, 1] = 2 * (y * z + w * x)
-    R[..., 2, 2] = 1 - 2 * (x * x + y * y)
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    R[..., 0, 0] = 0.5 - (yy + zz)
+    R[..., 0, 1] = xy - wz
+    R[..., 0, 2] = xz + wy
+    R[..., 1, 0] = xy + wz
+    R[..., 1, 1] = 0.5 - (xx + zz)
+    R[..., 1, 2] = yz - wx
+    R[..., 2, 0] = xz - wy
+    R[..., 2, 1] = yz + wx
+    R[..., 2, 2] = 0.5 - (xx + yy)
+
+    R = R * 2.0  
     return R
 
 
@@ -79,9 +91,7 @@ def slerp(v1: torch.Tensor, v2: torch.Tensor, t: float, DOT_THR: float = 0.9995,
         Interpolated vectors
     """
     # Take the dot product between normalized vectors
-    v1_norm = v1 / torch.norm(v1, dim=dim, keepdim=True)
-    v2_norm = v2 / torch.norm(v2, dim=dim, keepdim=True)
-    dot = (v1_norm * v2_norm).sum(dim)
+    dot = torch.nn.functional.cosine_similarity(v1, v2, dim=dim)
 
     # If the vectors are too close, return a simple linear interpolation
     if torch.abs(dot) > DOT_THR:
@@ -90,11 +100,12 @@ def slerp(v1: torch.Tensor, v2: torch.Tensor, t: float, DOT_THR: float = 0.9995,
         # Compute the angle terms we need
         theta = torch.acos(dot)
         theta_t = theta * t
-        sin_theta = torch.sin(theta)
-        sin_theta_t = torch.sin(theta_t)
+        tmp = torch.stack([theta, theta_t, theta - theta_t])
+        sin_tmp = torch.sin(tmp)
+        sin_theta, sin_theta_t, sin_theta_minus_theta_t = torch.unbind(sin_tmp, dim=0)
 
         # Compute the sine scaling terms for the vectors
-        s1 = torch.sin(theta - theta_t) / sin_theta
+        s1 = sin_theta_minus_theta_t / sin_theta
         s2 = sin_theta_t / sin_theta
 
         # Interpolate the vectors

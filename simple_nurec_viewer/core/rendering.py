@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from gsplat.rendering import rasterization
 from rich.console import Console
+import time
 
 console = Console()
 
@@ -170,16 +171,15 @@ def render_frame(
         K_t = K.float().to(device)
 
     # Collect Gaussians
+
     means, quats, scales, opacities, colors = ctx.gaussian_set.hybrid.collect(
         timestamp=timestamp,
-        viewmat=viewmat_t,
         traffic_pose_override=traffic_pose_override,
     )
     # Determine sh_degree from colors shape
     # [N, K, 3] -> K bases, find max degree such that (degree+1)^2 <= K
     K = colors.shape[1]
     sh_degree = int(torch.sqrt(torch.tensor(K, dtype=torch.float)).item()) - 1
-
 
     # Render Gaussians with alpha channel for blending
     rgb, alpha = render_gaussians(
