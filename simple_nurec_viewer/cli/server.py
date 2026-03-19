@@ -130,7 +130,6 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         """Handle render requests."""
         import time
 
-        start_time = time.perf_counter()
         response = render_pb2.RenderResponse()
 
         try:
@@ -225,20 +224,21 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
                     traffic_pose_override=self.last_traffic_pose,
                 )
 
-            # Convert to uint8 bytes
-            rgb_uint8 = np.clip(image * 255, 0, 255).astype(np.uint8)
-            rgb_data = rgb_uint8.tobytes()
+            # Convert to uint8 bytes: do clip/*255 in torch (on current device), bytes at the end
+            rgb_uint8 = image.clamp(0, 1).mul(255.0).to(torch.uint8)
+            rgb_data = rgb_uint8.contiguous().cpu().numpy().tobytes()
+
 
             # Fill response
             response.rgb_image.width = camera.width
             response.rgb_image.height = camera.height
             response.rgb_image.rgb_data = rgb_data
             response.success = True
-            response.render_time_ms = (time.perf_counter() - start_time) * 1000.0
+            response.render_time_ms = 0
 
             # Increment render counter and clear cache every 20 renders
             self.render_count += 1
-            if self.render_count % 20 == 0:
+            if self.render_count % 40 == 0:
                 torch.cuda.empty_cache()
                 if self.verbose:
                     self.console.print(f"[dim]🧹 CUDA cache cleared after {self.render_count} renders[/dim]")
@@ -246,7 +246,7 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
         except Exception as e:
             response.success = False
             response.error_message = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            response.render_time_ms = (time.perf_counter() - start_time) * 1000.0
+            response.render_time_ms = 0
 
         return response
 

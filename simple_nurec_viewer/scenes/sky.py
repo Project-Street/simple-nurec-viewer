@@ -50,6 +50,7 @@ class SkyCubeMap:
         self.cubemap = cubemap_texture
         self.device = cubemap_texture.device
         self.resolution = cubemap_texture.shape[1]  # Assuming square faces
+        self._rays_camera_cache: dict[tuple[int, int, float, float, float, float], torch.Tensor] = {}
 
     @torch.no_grad()
     def render(self, H: int, W: int, ray_d: torch.Tensor) -> torch.Tensor:
@@ -105,55 +106,41 @@ class SkyCubeMap:
         sky_color = sky_color[0].permute(2, 0, 1)  # [3, H, W]
         return sky_color
 
+    @torch.no_grad()
+    def _get_rays_camera_cached(self, H: int, W: int, K: torch.Tensor) -> torch.Tensor:
+        """
+        Get normalized camera-space rays [H, W, 3] with cache by intrinsics and size.
+        """
+        fx = float(K[0, 0].item())
+        fy = float(K[1, 1].item())
+        cx = float(K[0, 2].item())
+        cy = float(K[1, 2].item())
+        cache_key = (H, W, fx, fy, cx, cy)
 
-def generate_ray_directions(H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:
-    """
-    Generate ray directions for all pixels in world space.
+        cached = self._rays_camera_cache.get(cache_key)
+        if cached is not None and cached.device == K.device:
+            return cached
 
-    Args:
-        H: Image height
-        W: Image width
-        K: Camera intrinsic matrix [3, 3]
-        c2w: Camera-to-world transformation matrix [4, 4]
+        i, j = torch.meshgrid(
+            torch.linspace(0, W - 1, W, device=K.device),
+            torch.linspace(0, H - 1, H, device=K.device),
+            indexing="xy",
+        )
 
-    Returns:
-        ray_d: Normalized ray directions in world space [H, W, 3]
-    """
-    device = K.device
+        x = (i - cx) / fx
+        y = (j - cy) / fy
+        rays_camera = torch.stack([x, y, torch.ones_like(x)], dim=-1)
+        rays_camera = F.normalize(rays_camera, p=2, dim=-1)
 
-    # Create pixel grid (0 to W-1, 0 to H-1)
-    i, j = torch.meshgrid(
-        torch.linspace(0, W - 1, W, device=device), torch.linspace(0, H - 1, H, device=device), indexing="xy"
-    )  # i: [W,], j: [H,] -> meshgrid -> [H, W] each
+        self._rays_camera_cache[cache_key] = rays_camera
+        return rays_camera
 
-    # Extract focal lengths and principal point from intrinsic matrix
-    # K = [[fx, 0,  cx],
-    #      [0,  fy, cy],
-    #      [0,  0,  1 ]]
-    fx = K[0, 0]
-    fy = K[1, 1]
-    cx = K[0, 2]
-    cy = K[1, 2]
-
-    # Convert pixel coordinates to camera coordinates
-    # Note: in camera coordinates, x points right, y points down, z points forward
-    # We need to flip y because image coordinates have y pointing down
-    x = (i - cx) / fx  # [H, W]
-    y = (j - cy) / fy  # [H, W]
-
-    # Stack into directions [H, W, 3]
-    # Camera rays point in positive z direction
-    rays_camera = torch.stack([x, y, torch.ones_like(x)], dim=-1)  # [H, W, 3]
-
-    # Normalize camera-space rays
-    rays_camera = F.normalize(rays_camera, p=2, dim=-1)
-
-    # Transform to world space using rotation from c2w
-    # c2w is [4, 4], rotation is the upper-left 3x3
-    R = c2w[:3, :3]  # [3, 3]
-    rays_world = torch.einsum("ij,hwj->hwi", R, rays_camera)  # [H, W, 3]
-
-    # Normalize world-space rays (should already be normalized, but ensure)
-    rays_world = F.normalize(rays_world, p=2, dim=-1)
-
-    return rays_world  # [H, W, 3]
+    @torch.no_grad()
+    def generate_ray_directions(self, H: int, W: int, K: torch.Tensor, c2w: torch.Tensor) -> torch.Tensor:
+        """
+        Generate world-space ray directions [H, W, 3] using cached camera-space rays.
+        """
+        rays_camera = self._get_rays_camera_cached(H, W, K)
+        R = c2w[:3, :3]
+        rays_world = torch.einsum("ij,hwj->hwi", R, rays_camera)
+        return rays_world

@@ -177,7 +177,7 @@ def render_fn(
     )
 
     # Render frame using shared rendering function
-    return render_frame(ctx, viewmat, K, (width, height), timestamp=timestamp)
+    return render_frame(ctx, viewmat, K, (width, height), timestamp=timestamp).cpu().numpy()
 
 
 def add_camera_trajectories(

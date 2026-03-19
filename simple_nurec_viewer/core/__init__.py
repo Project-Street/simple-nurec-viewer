@@ -8,7 +8,7 @@ sky cube map rendering for the NuRec viewer.
 from simple_nurec_viewer.core.loader import NuRecData, load_nurec_data
 from simple_nurec_viewer.core.rendering import RenderContext, render_frame, render_gaussians
 from simple_nurec_viewer.core.viewer import GaussianSet, add_camera_trajectories, render_fn
-from simple_nurec_viewer.scenes.sky import SkyCubeMap, generate_ray_directions
+from simple_nurec_viewer.scenes.sky import SkyCubeMap
 
 __all__ = [
     # Data structures
@@ -25,5 +25,5 @@ __all__ = [
     "add_camera_trajectories",
     # Sky
     "SkyCubeMap",
-    "generate_ray_directions",
+    "generate_ray_direction",
 ]

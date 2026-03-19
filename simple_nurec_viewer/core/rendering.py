@@ -134,7 +134,7 @@ def render_frame(
     camera_model: str = "pinhole",
     ftheta_coeffs=None,
     traffic_pose_override: Optional[dict] = None,
-) -> np.ndarray:
+) -> torch.Tensor:
     """
     Render a single frame from the given camera viewpoint.
 
@@ -152,10 +152,8 @@ def render_frame(
         traffic_pose_override: Optional traffic pose override payload
 
     Returns:
-        Rendered RGB image as numpy array [H, W, 3]
+        Rendered RGB image as torch tensor [H, W, 3] on ctx.device
     """
-    from ..scenes.sky import generate_ray_directions
-
     width, height = resolution
     device = ctx.device
 
@@ -204,7 +202,7 @@ def render_frame(
     if ctx.sky_cubemap is not None:
         # Compute ray directions
         c2w = torch.linalg.inv(viewmat_t)
-        ray_d = generate_ray_directions(height, width, K_t, c2w)  # [H, W, 3]
+        ray_d = ctx.sky_cubemap.generate_ray_directions(height, width, K_t, c2w)  # [H, W, 3]
 
         # Render sky
         sky_rgb = ctx.sky_cubemap.render(height, width, ray_d)  # [3, H, W]
@@ -216,7 +214,7 @@ def render_frame(
     else:
         final_image = rgb
 
-    return final_image.clamp(0, 1).cpu().numpy()
+    return final_image
 
 
 __all__ = [

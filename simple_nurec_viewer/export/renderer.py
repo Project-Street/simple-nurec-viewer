@@ -49,8 +49,10 @@ def render_camera_frame(
     )
 
     # Render frame using shared rendering function
-    return render_frame(
-        ctx, viewmat, K, resolution, timestamp=timestamp, camera_model=camera_model, ftheta_coeffs=ftheta_coeffs
+    return (
+        render_frame(ctx, viewmat, K, resolution, timestamp=timestamp, camera_model=camera_model, ftheta_coeffs=ftheta_coeffs)
+        .cpu()
+        .numpy()
     )
 
 
