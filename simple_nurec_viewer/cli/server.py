@@ -115,7 +115,7 @@ class RenderServicer(render_pb2_grpc.RenderServiceServicer):
             with self._scene_lock:
                 self.gaussian_set = data.gaussian_set
                 self.sky_cubemap = data.sky_cubemap
-                self.last_traffic_pose = None
+                self.last_traffic_pose = {"tracks_id": [], "poses_4x4": np.empty((0, 4, 4), dtype=np.float32)}
                 self.render_count = 0
                 self.ckpt_path = path
 

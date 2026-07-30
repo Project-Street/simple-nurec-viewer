@@ -431,6 +431,34 @@ class RigidGaussian(BaseGaussian):
 
         traffic_pose_override = kwargs.get("traffic_pose_override", None)
 
+        active_gaussian_mask = None
+        if traffic_pose_override is not None:
+            if self._sequence_track_index_per_gaussian is None:
+                raise RuntimeError("Rigid track mappings are not initialized")
+            active_sequence_track_indices = torch.tensor(
+                [
+                    self._sequence_track_index_by_object_track_id.get(track_id, -1)
+                    for track_id in traffic_pose_override["tracks_id"]
+                ],
+                device=self.device,
+                dtype=torch.long,
+            )
+            active_sequence_track_indices = active_sequence_track_indices[
+                active_sequence_track_indices >= 0
+            ]
+            active_gaussian_mask = torch.isin(
+                self._sequence_track_index_per_gaussian,
+                active_sequence_track_indices,
+            )
+            means = means[active_gaussian_mask]
+            quats = quats[active_gaussian_mask]
+            scales = scales[active_gaussian_mask]
+            opacities = opacities[active_gaussian_mask]
+            colors = colors[active_gaussian_mask]
+            base_rotations = self.rotations[active_gaussian_mask]
+        else:
+            base_rotations = self.rotations
+
         override_map = self._build_override_map(traffic_pose_override)
 
         # Apply rigid transform if timestamp or override is provided
@@ -441,6 +469,9 @@ class RigidGaussian(BaseGaussian):
                 effective_timestamp,
                 override_map=override_map,
             )
+            if active_gaussian_mask is not None:
+                rigid_quaternions = rigid_quaternions[active_gaussian_mask]
+                rigid_translations = rigid_translations[active_gaussian_mask]
 
             # Build rotation matrices
             rigid_rotations = build_rotation(rigid_quaternions)  # [N, 3, 3]
@@ -453,7 +484,7 @@ class RigidGaussian(BaseGaussian):
             # new_rotation = quaternion_multiply(track_q, base_rotation)
             rotations_transformed = quaternion_multiply(
                 rigid_quaternions,  # [N, 4]
-                self.rotations,  # [N, 4]
+                base_rotations,  # [N, 4]
             )
 
             return positions_transformed, rotations_transformed, scales, opacities, colors

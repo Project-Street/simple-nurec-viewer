@@ -74,6 +74,7 @@ class GaussianSet:
         # Extract rigid Gaussians if available
         dr_key = "model.gaussians_nodes.dynamic_rigids.positions"
         if dr_key in state_dict and state_dict[dr_key].shape[0] > 0:
+            rigid_cuboid_ids = state_dict["model.gaussians_nodes.dynamic_rigids.gaussian_cuboid_ids"]
             rigids = RigidGaussian(
                 positions=state_dict["model.gaussians_nodes.dynamic_rigids.positions"],
                 rotations=state_dict["model.gaussians_nodes.dynamic_rigids.rotations"],
@@ -83,7 +84,7 @@ class GaussianSet:
                 features_specular=torch.zeros_like(
                     state_dict["model.gaussians_nodes.dynamic_rigids.features_specular"]
                 ),
-                cuboid_ids=state_dict["model.gaussians_nodes.dynamic_rigids.gaussian_cuboid_ids"],
+                cuboid_ids=rigid_cuboid_ids,
                 tracks_data=tracks_data,
                 dynamic_rigids_track_mapping=dynamic_rigids_track_mapping,
                 device=device,
